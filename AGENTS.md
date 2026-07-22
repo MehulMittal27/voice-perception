@@ -169,6 +169,14 @@ Keep the weights in config.py so they can be tuned during the demo.
 - Log at INFO for lifecycle events, DEBUG for per-chunk noise
 - Keep functions under 40 lines; if longer, factor
 
+## Attribution
+
+This service uses SenseVoice-Small by Alibaba's FunAudioLLM team.
+
+Repo: https://github.com/FunAudioLLM/SenseVoice
+
+If we ship this beyond the hackathon, verify license compatibility and add proper attribution in the README and any user-facing demo.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
