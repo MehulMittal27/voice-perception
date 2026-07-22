@@ -10,8 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import numpy as np
+
 from voice_perception import config
-from voice_perception.audio import StreamingAudioDecoder
+from voice_perception.audio import StreamingAudioDecoder, empty_pcm, to_float32_mono
 from voice_perception.fusion import HesitationScorer
 
 logger = logging.getLogger(__name__)
@@ -22,16 +24,53 @@ def utc_now() -> datetime:
 
 
 @dataclass
+class RollingAudioBuffer:
+    """Keep recent live PCM and decide when there is enough context."""
+
+    max_samples: int = max(config.LIVE_ROLLING_SAMPLES, config.LIVE_MIN_CONTEXT_SAMPLES)
+    min_samples: int = config.LIVE_MIN_CONTEXT_SAMPLES
+    hop_samples: int = config.LIVE_INFERENCE_HOP_SAMPLES
+    _samples: np.ndarray = field(default_factory=empty_pcm)
+    _samples_since_inference: int = 0
+
+    def append(self, pcm_16khz_mono: np.ndarray) -> np.ndarray | None:
+        chunk = to_float32_mono(pcm_16khz_mono)
+        if chunk.size == 0:
+            return None
+        combined = np.concatenate((self._samples, chunk))
+        self._samples = _trim_samples(combined, self.max_samples)
+        self._samples_since_inference += chunk.size
+        if not self._ready_for_inference():
+            return None
+        self._samples_since_inference = 0
+        return self._samples.copy()
+
+    @property
+    def samples(self) -> int:
+        return int(self._samples.size)
+
+    def _ready_for_inference(self) -> bool:
+        if self._samples.size < self.min_samples:
+            return False
+        return self._samples_since_inference >= self.hop_samples
+
+
+@dataclass
 class SessionState:
     session_id: str
     scorer: HesitationScorer = field(default_factory=HesitationScorer)
-    transcript_buffer: list[str] = field(default_factory=list)
+    transcript_text: str = ""
     updated_at: datetime = field(default_factory=utc_now)
     last_accessed_at: datetime = field(default_factory=utc_now)
     perception_result: dict[str, Any] = field(default_factory=dict)
     hesitation_score: float = 0.0
     chunks_processed: int = 0
     decoder: StreamingAudioDecoder = field(default_factory=StreamingAudioDecoder)
+    audio_buffer: RollingAudioBuffer = field(default_factory=RollingAudioBuffer)
+
+    def ingest_audio(self, pcm_16khz_mono: np.ndarray) -> np.ndarray | None:
+        self.last_accessed_at = utc_now()
+        return self.audio_buffer.append(pcm_16khz_mono)
 
     def update(self, result: dict[str, Any]) -> None:
         self.perception_result = dict(result)
@@ -39,7 +78,7 @@ class SessionState:
         self.chunks_processed += 1
         self.updated_at = utc_now()
         self.last_accessed_at = self.updated_at
-        self._append_transcript(str(result.get("transcript", "")))
+        self._replace_transcript(str(result.get("transcript", "")))
 
     def to_response(self) -> dict[str, Any]:
         self.last_accessed_at = utc_now()
@@ -57,15 +96,10 @@ class SessionState:
 
     @property
     def transcript_partial(self) -> str:
-        joined = " ".join(part for part in self.transcript_buffer if part).strip()
-        return joined[-config.TRANSCRIPT_MAX_CHARS :]
+        return self.transcript_text[-config.TRANSCRIPT_MAX_CHARS :]
 
-    def _append_transcript(self, transcript: str) -> None:
-        if not transcript.strip():
-            return
-        self.transcript_buffer.append(transcript.strip())
-        if len(self.transcript_partial) >= config.TRANSCRIPT_MAX_CHARS:
-            self.transcript_buffer = [self.transcript_partial]
+    def _replace_transcript(self, transcript: str) -> None:
+        self.transcript_text = transcript.strip()[-config.TRANSCRIPT_MAX_CHARS :]
 
 
 class SessionManager:
@@ -132,6 +166,12 @@ class SessionManager:
         while True:
             await asyncio.sleep(config.SESSION_SWEEP_SECONDS)
             self.expire_sessions()
+
+
+def _trim_samples(samples: np.ndarray, max_samples: int) -> np.ndarray:
+    if samples.size <= max_samples:
+        return np.ascontiguousarray(samples, dtype=np.float32)
+    return np.ascontiguousarray(samples[-max_samples:], dtype=np.float32)
 
 
 def _default_perception_result() -> dict[str, Any]:
