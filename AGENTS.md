@@ -100,6 +100,9 @@ Response:
   "transcript_partial": "guten tag ich habe",
   "emotion": "FEARFUL",
   "emotion_confidence": 0.72,
+  "live_raw_emotion": "NEUTRAL",
+  "live_raw_emotion_confidence": 0.81,
+  "live_stabilized_emotion": { "label": "FEARFUL", "raw_label": "NEUTRAL", "decision": "hold_non_neutral" },
   "events": ["Breath"],
   "hesitation_score": 0.68,
   "chunks_processed": 7,
@@ -113,9 +116,11 @@ Response:
     "speaking_confidence": 0.38,
     "signal_reliability": 0.82
   },
-  "ser": { "label": "FEARFUL", "raw_label": "fearful", "experimental": true }
+  "ser": { "label": "FEARFUL", "raw_label": "fearful", "display_label": "FEARFUL", "experimental": true }
 }
 ```
+
+In live state, primary `emotion` and `emotion_confidence` are server-stabilized for display and API consumers. Raw rolling-window Emotion2Vec+ reads remain in `live_raw_emotion`, `live_raw_emotion_confidence`, `live_stabilized_emotion`, and `ser` debug fields. One-shot `/classify` stays direct full-clip Emotion2Vec+ output.
 
 If no state yet: return defaults (emotion NEUTRAL, hesitation 0.0, empty events).
 
@@ -212,7 +217,9 @@ with the acoustic hesitation/stress lane when those fields are present.
 8. Emotion2Vec+ base is loaded through `funasr.AutoModel` and controlled by
    `SER_ENABLED`, `SER_MODEL_DIR`, `SER_CACHE_DIR`, `SER_THREADS`,
    `SER_PRELOAD`, and `SER_MIN_CONTEXT_SECONDS`. Feed it the same live rolling
-   PCM context used for SenseVoice, not isolated 1 second slices.
+   PCM context used for SenseVoice, not isolated 1 second slices. Live session
+   state stabilizes the displayed emotion with `LIVE_EMOTION_*` config knobs;
+   do not apply only UI-side smoothing or change one-shot `/classify` to use it.
 9. Emotion2Vec+ is hackathon/demo use until license review is complete. Keep
    the `ser.license_caveat` API field and user-facing copy honest.
 10. `signals.py` documents the deterministic acoustic formulas. It is the

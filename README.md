@@ -29,7 +29,7 @@ The page also includes a separate record then submit area for one-shot testing. 
 
 Both live and one-shot paths apply a configurable no-speech guard before SenseVoice or Emotion2Vec+ inference. Audio below `NO_SPEECH_RMS_THRESHOLD`, `NO_SPEECH_MIN_NON_SILENT_RATIO`, or `NO_SPEECH_MIN_NON_SILENT_SECONDS` returns an idle no-speech state instead of a hallucinated transcript, `Speech` event, or emotion label.
 
-Live microphone inference uses a rolling PCM context window so SenseVoice and Emotion2Vec+ do not process each MediaRecorder slice in isolation. The browser sends 200 ms chunks for fast acoustic updates while model inference waits for the rolling context.
+Live microphone inference uses a rolling PCM context window so SenseVoice and Emotion2Vec+ do not process each MediaRecorder slice in isolation. The browser sends 200 ms chunks for fast acoustic updates while model inference waits for the rolling context. Live state stabilizes the primary `emotion` fields across rolling Emotion2Vec+ windows to avoid flicker, while raw live model reads are retained in `live_raw_emotion`, `live_raw_emotion_confidence`, `live_stabilized_emotion`, and `ser` debug fields. One-shot `/classify` remains a direct full-clip Emotion2Vec+ result.
 For an English-only demo, run with `SENSEVOICE_LANGUAGE=en`; the default remains `auto` for multilingual use.
 
 ## API summary
@@ -38,7 +38,7 @@ See `AGENTS.md` for the full API contract and architecture.
 
 - `POST /session/start` returns a `session_id`
 - `WebSocket /audio/{session_id}` accepts MediaRecorder binary audio chunks
-- `GET /state/{session_id}` returns live transcript, Emotion2Vec+ emotion, events, hesitation score, chunk count, `signals`, `signal_events`, `score_drivers`, and `ser` debug fields. A legacy `voice_state` object may still appear for compatibility, but it is debug-only and not a product emotion label.
+- `GET /state/{session_id}` returns live transcript, stabilized live Emotion2Vec+ emotion, events, hesitation score, chunk count, `signals`, `signal_events`, `score_drivers`, and `ser` debug fields. Raw rolling-window emotion reads are available in `live_raw_emotion`, `live_raw_emotion_confidence`, and `live_stabilized_emotion`. A legacy `voice_state` object may still appear for compatibility, but it is debug-only and not a product emotion label.
 - `POST /classify` accepts a multipart `file` audio upload and returns one-shot transcript, Emotion2Vec+ emotion, events, hesitation score, latency, audio sample count, `signals`, `signal_events`, `score_drivers`, and `ser` debug fields. A legacy `voice_state` object may still appear for compatibility, but it is debug-only.
 - `POST /session/{session_id}/end` cleans up a session
 - `GET /health` reports service health and model load state
