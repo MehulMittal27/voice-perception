@@ -23,6 +23,9 @@ uv run uvicorn voice_perception.main:app --reload
 
 Open http://localhost:8000 and click Start. First startup can take 1 to 3 minutes while SenseVoice downloads and loads.
 
+Live microphone inference uses a rolling PCM context window so SenseVoice does not transcribe each 1 second MediaRecorder slice in isolation.
+For an English-only demo, run with `SENSEVOICE_LANGUAGE=en`; the default remains `auto` for multilingual use.
+
 ## API summary
 
 See `AGENTS.md` for the full API contract and architecture.
@@ -53,3 +56,4 @@ uv run python scripts/test_wav.py --compare tests/fixtures/calm.wav tests/fixtur
 
 If startup tries to export ONNX, make sure `SENSEVOICE_MODEL_DIR` is `iic/SenseVoiceSmall-onnx` or a local ONNX model directory.
 If PyAV cannot decode browser chunks, try Chrome or Firefox with `audio/webm;codecs=opus`.
+If short English phrases appear as other languages during a demo, set `SENSEVOICE_LANGUAGE=en` and keep the default rolling live context enabled.

@@ -159,6 +159,11 @@ Keep the weights in config.py so they can be tuned during the demo.
 5. Browser MediaRecorder produces `audio/webm;codecs=opus` on Chrome/Firefox
    but `audio/mp4` on Safari. PyAV handles both, but log the incoming
    container format for debugging.
+6. Live WebSocket inference intentionally buffers a rolling PCM window
+   (`LIVE_ROLLING_CONTEXT_SECONDS`, default 5s) and waits for about 2s of
+   context before the first inference. Do not revert to per-slice SenseVoice
+   calls; short chunks can cause auto-language flips and garbage transcripts.
+   For English-only demos, set `SENSEVOICE_LANGUAGE=en`.
 
 ## Testing rules
 - Every component must be runnable in isolation. `python -m voice_perception.perception` should be able to run inference on a bundled test WAV.

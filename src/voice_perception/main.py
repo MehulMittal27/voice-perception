@@ -109,18 +109,21 @@ async def _process_audio_bytes(websocket: WebSocket, session_id: str, raw_bytes:
         await websocket.close(code=1008, reason="session ended")
         return
     pcm = state.decoder.decode(raw_bytes)
-    if pcm.size < config.MIN_INFERENCE_SAMPLES:
+    window = state.ingest_audio(pcm)
+    if window is None or window.size < config.MIN_INFERENCE_SAMPLES:
         await _send_ack(websocket, started, buffered=True)
         return
-    result = await asyncio.to_thread(app.state.perception.analyze, pcm)
+    result = await asyncio.to_thread(app.state.perception.analyze, window)
     manager.update(session_id, result)
     latency_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
-        "event=chunk_processed session_id=%s bytes=%d samples=%d container=%s "
-        "latency_ms=%d inference_ms=%d emotion=%s hesitation=%.3f",
+        "event=chunk_processed session_id=%s bytes=%d chunk_samples=%d "
+        "window_samples=%d container=%s latency_ms=%d inference_ms=%d "
+        "emotion=%s hesitation=%.3f",
         session_id,
         len(raw_bytes),
         pcm.size,
+        window.size,
         state.decoder.last_format,
         latency_ms,
         result.get("inference_ms", 0),

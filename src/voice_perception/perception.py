@@ -73,6 +73,7 @@ class VoicePerception:
             model_path = self._resolve_model_dir()
             self._ensure_sentencepiece_model(model_path)
             self.resolved_model_dir = model_path
+            logger.info("event=model_config language=%s", config.SENSEVOICE_LANGUAGE)
             return SenseVoiceSmall(
                 str(model_path),
                 batch_size=1,
@@ -133,7 +134,7 @@ class VoicePerception:
     def _infer_numpy(self, pcm: np.ndarray) -> Any:
         return self.model(
             np.ascontiguousarray(pcm, dtype=np.float32),
-            language="auto",
+            language=config.SENSEVOICE_LANGUAGE,
             textnorm="withitn",
         )
 
@@ -143,7 +144,11 @@ class VoicePerception:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
                 temp_path = handle.name
             sf.write(temp_path, pcm, config.SAMPLE_RATE, subtype="PCM_16")
-            return self.model(temp_path, language="auto", textnorm="withitn")
+            return self.model(
+                temp_path,
+                language=config.SENSEVOICE_LANGUAGE,
+                textnorm="withitn",
+            )
         finally:
             if temp_path:
                 Path(temp_path).unlink(missing_ok=True)
@@ -154,6 +159,7 @@ class VoicePerception:
             "transcript": "",
             "emotion": "NEUTRAL",
             "emotion_confidence": 0.0,
+            "raw_emotion": None,
             "events": [],
             "silence_ratio": silence_ratio,
             "inference_ms": 0,
@@ -164,9 +170,10 @@ def parse_sensevoice_output(raw_output: Any) -> dict[str, Any]:
     record = _first_record(raw_output)
     raw_text, direct_confidence = _extract_text_and_confidence(record)
     tokens = TOKEN_RE.findall(raw_text)
-    emotion, token_has_emotion = _extract_emotion(tokens)
+    emotion, token_has_emotion, raw_emotion = _extract_emotion(tokens)
     events = _extract_events(tokens)
     transcript = _strip_tokens(raw_text)
+    _log_unknown_emotion(raw_emotion, raw_text)
     if direct_confidence is None:
         # funasr-onnx 0.4.1 returns decoded tokens, not per-label probabilities.
         # Presence of an explicit emotion token is the confidence proxy.
@@ -177,10 +184,21 @@ def parse_sensevoice_output(raw_output: Any) -> dict[str, Any]:
         "transcript": transcript,
         "emotion": emotion,
         "emotion_confidence": confidence,
+        "raw_emotion": raw_emotion,
         "events": events,
         "silence_ratio": 0.0,
         "inference_ms": 0,
     }
+
+
+def _log_unknown_emotion(raw_emotion: str | None, raw_text: str) -> None:
+    if raw_emotion is None or raw_emotion in EMOTION_LABELS:
+        return
+    logger.info(
+        "event=model_unknown_emotion raw_emotion=%s output_chars=%d",
+        raw_emotion,
+        len(raw_text),
+    )
 
 
 def _first_record(raw_output: Any) -> Any:
@@ -204,12 +222,15 @@ def _find_confidence(record: dict[str, Any]) -> float | None:
     return None
 
 
-def _extract_emotion(tokens: list[str]) -> tuple[str, bool]:
+def _extract_emotion(tokens: list[str]) -> tuple[str, bool, str | None]:
+    raw_emotion: str | None = None
     for token in tokens:
         label = token.strip().upper()
         if label in EMOTION_LABELS:
-            return label, True
-    return "NEUTRAL", False
+            return label, True, label
+        if label.startswith("EMO_"):
+            raw_emotion = label
+    return "NEUTRAL", False, raw_emotion
 
 
 def _extract_events(tokens: list[str]) -> list[str]:
