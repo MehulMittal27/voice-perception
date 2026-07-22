@@ -9,11 +9,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from voice_perception import config
+from voice_perception.audio import decode_chunk
+from voice_perception.fusion import compute_hesitation_score
 from voice_perception.perception import VoicePerception
 from voice_perception.session import SessionManager
 
@@ -86,9 +88,58 @@ async def end_session(session_id: str) -> dict[str, bool]:
     return {"ok": True}
 
 
+@app.post("/classify")
+async def classify_audio(file: UploadFile = File(...)) -> dict[str, Any]:
+    raw_bytes = await file.read()
+    if not raw_bytes:
+        raise HTTPException(status_code=400, detail="audio upload is empty")
+    return await _classify_audio_bytes(raw_bytes, file.content_type or "unknown")
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     return {"status": "ok", "model_loaded": hasattr(app.state, "perception")}
+
+
+async def _classify_audio_bytes(raw_bytes: bytes, content_type: str = "unknown") -> dict[str, Any]:
+    started = time.perf_counter()
+    pcm = decode_chunk(raw_bytes)
+    if pcm.size == 0:
+        raise HTTPException(status_code=422, detail="audio upload could not be decoded")
+    result = await asyncio.to_thread(app.state.perception.analyze, pcm)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    response = _one_shot_response(result, latency_ms, int(pcm.size))
+    logger.info(
+        "event=one_shot_classified content_type=%s bytes=%d samples=%d "
+        "latency_ms=%d inference_ms=%d emotion=%s hesitation=%.3f",
+        content_type,
+        len(raw_bytes),
+        pcm.size,
+        latency_ms,
+        result.get("inference_ms", 0),
+        response["emotion"],
+        response["hesitation_score"],
+    )
+    return response
+
+
+def _one_shot_response(
+    result: dict[str, Any], latency_ms: int, audio_samples: int
+) -> dict[str, Any]:
+    transcript = str(result.get("transcript", ""))
+    return {
+        "transcript": transcript,
+        "transcript_partial": transcript,
+        "emotion": result.get("emotion", "NEUTRAL"),
+        "emotion_confidence": float(result.get("emotion_confidence", 0.0)),
+        "events": list(result.get("events", [])),
+        "hesitation_score": 0.0 if result.get("no_speech") else compute_hesitation_score(result),
+        "silence_ratio": float(result.get("silence_ratio", 0.0)),
+        "no_speech": bool(result.get("no_speech", False)),
+        "inference_ms": int(result.get("inference_ms", 0)),
+        "latency_ms": latency_ms,
+        "audio_samples": audio_samples,
+    }
 
 
 async def _receive_audio_loop(websocket: WebSocket, session_id: str) -> None:
@@ -114,6 +165,10 @@ async def _process_audio_bytes(websocket: WebSocket, session_id: str, raw_bytes:
         await _send_ack(websocket, started, buffered=True)
         return
     result = await asyncio.to_thread(app.state.perception.analyze, window)
+    if result.get("no_speech"):
+        manager.mark_no_speech(session_id, result)
+        await _send_ack(websocket, started, buffered=False, no_speech=True)
+        return
     manager.update(session_id, result)
     latency_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
@@ -133,10 +188,17 @@ async def _process_audio_bytes(websocket: WebSocket, session_id: str, raw_bytes:
     await websocket.send_json({"chunk_processed": True, "latency_ms": latency_ms})
 
 
-async def _send_ack(websocket: WebSocket, started: float, buffered: bool) -> None:
+async def _send_ack(
+    websocket: WebSocket, started: float, buffered: bool, no_speech: bool = False
+) -> None:
     latency_ms = int((time.perf_counter() - started) * 1000)
     await websocket.send_json(
-        {"chunk_processed": True, "latency_ms": latency_ms, "buffered": buffered}
+        {
+            "chunk_processed": True,
+            "latency_ms": latency_ms,
+            "buffered": buffered,
+            "no_speech": no_speech,
+        }
     )
 
 

@@ -87,20 +87,41 @@ def decode_chunk(raw_bytes: bytes) -> np.ndarray:
 def compute_silence_ratio(pcm_16khz_mono: np.ndarray) -> float:
     """Return the fraction of short RMS frames below the silence threshold."""
 
+    return analyze_speech_activity(pcm_16khz_mono).silence_ratio
+
+
+@dataclass(frozen=True)
+class SpeechActivity:
+    rms: float
+    peak: float
+    silence_ratio: float
+    non_silent_ratio: float
+    non_silent_seconds: float
+    has_speech: bool
+
+
+def analyze_speech_activity(pcm_16khz_mono: np.ndarray) -> SpeechActivity:
+    """Measure whether PCM has enough non-silent audio for model inference."""
+
     pcm = to_float32_mono(pcm_16khz_mono)
     if pcm.size == 0:
-        return 1.0
-    frame_len = max(1, int(config.SAMPLE_RATE * config.SILENCE_FRAME_MS / 1000))
-    silent = 0
-    total = 0
-    for start in range(0, pcm.size, frame_len):
-        frame = pcm[start : start + frame_len]
-        if frame.size == 0:
-            continue
-        rms = float(np.sqrt(np.mean(np.square(frame, dtype=np.float32))))
-        silent += int(rms < config.SILENCE_RMS_THRESHOLD)
-        total += 1
-    return silent / total if total else 1.0
+        return SpeechActivity(0.0, 0.0, 1.0, 0.0, 0.0, False)
+    rms = float(np.sqrt(np.mean(np.square(pcm, dtype=np.float32))))
+    peak = float(np.max(np.abs(pcm)))
+    frame_rms = _frame_rms_values(pcm)
+    non_silent = int(np.count_nonzero(frame_rms >= config.SILENCE_RMS_THRESHOLD))
+    total = int(frame_rms.size)
+    non_silent_ratio = non_silent / total if total else 0.0
+    non_silent_seconds = non_silent * config.SILENCE_FRAME_MS / 1000.0
+    has_speech = _has_enough_speech(rms, non_silent_ratio, non_silent_seconds)
+    return SpeechActivity(
+        rms,
+        peak,
+        1.0 - non_silent_ratio,
+        non_silent_ratio,
+        non_silent_seconds,
+        has_speech,
+    )
 
 
 def load_wav_16khz_mono(path: str | Path) -> np.ndarray:
@@ -145,6 +166,26 @@ def to_float32_mono(data: np.ndarray) -> np.ndarray:
 
 def empty_pcm() -> np.ndarray:
     return np.empty(0, dtype=np.float32)
+
+
+def _frame_rms_values(pcm: np.ndarray) -> np.ndarray:
+    frame_len = max(1, int(config.SAMPLE_RATE * config.SILENCE_FRAME_MS / 1000))
+    values: list[float] = []
+    for start in range(0, pcm.size, frame_len):
+        frame = pcm[start : start + frame_len]
+        if frame.size:
+            values.append(float(np.sqrt(np.mean(np.square(frame, dtype=np.float32)))))
+    return np.asarray(values, dtype=np.float32)
+
+
+def _has_enough_speech(
+    rms: float, non_silent_ratio: float, non_silent_seconds: float
+) -> bool:
+    if rms < config.NO_SPEECH_RMS_THRESHOLD:
+        return False
+    if non_silent_ratio < config.NO_SPEECH_MIN_NON_SILENT_RATIO:
+        return False
+    return non_silent_seconds >= config.NO_SPEECH_MIN_NON_SILENT_SECONDS
 
 
 def _decode_container(raw_bytes: bytes) -> tuple[np.ndarray, str]:

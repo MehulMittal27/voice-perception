@@ -17,7 +17,12 @@ import numpy as np
 import soundfile as sf
 
 from voice_perception import config
-from voice_perception.audio import compute_silence_ratio, load_wav_16khz_mono, to_float32_mono
+from voice_perception.audio import (
+    SpeechActivity,
+    analyze_speech_activity,
+    load_wav_16khz_mono,
+    to_float32_mono,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,16 +59,19 @@ class VoicePerception:
 
     def analyze(self, pcm_16khz_mono: np.ndarray) -> dict[str, Any]:
         pcm = to_float32_mono(pcm_16khz_mono)
-        silence_ratio = compute_silence_ratio(pcm)
+        activity = analyze_speech_activity(pcm)
         if pcm.size < config.MIN_INFERENCE_SAMPLES:
-            return self._empty_result(silence_ratio)
+            return self._empty_result(activity.silence_ratio)
+        if not activity.has_speech:
+            return self._no_speech_result(activity)
         start = time.perf_counter()
         with self._lock:
             raw_output = self._infer(pcm)
         inference_ms = int((time.perf_counter() - start) * 1000)
         parsed = parse_sensevoice_output(raw_output)
-        parsed["silence_ratio"] = silence_ratio
+        parsed["silence_ratio"] = activity.silence_ratio
         parsed["inference_ms"] = inference_ms
+        parsed["no_speech"] = False
         return parsed
 
     def _load_model(self) -> Any:
@@ -163,6 +171,20 @@ class VoicePerception:
             "events": [],
             "silence_ratio": silence_ratio,
             "inference_ms": 0,
+            "no_speech": True,
+        }
+
+    @staticmethod
+    def _no_speech_result(activity: SpeechActivity) -> dict[str, Any]:
+        return {
+            "transcript": "",
+            "emotion": "NEUTRAL",
+            "emotion_confidence": 0.0,
+            "raw_emotion": None,
+            "events": [],
+            "silence_ratio": activity.silence_ratio,
+            "inference_ms": 0,
+            "no_speech": True,
         }
 
 
