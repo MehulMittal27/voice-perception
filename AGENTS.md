@@ -2,8 +2,8 @@
 
 ## What this is
 A standalone microservice that listens to live audio and emits a real-time
-paralinguistic state: speech activity, acoustic voice state, experimental
-emotion, audio events, and composite hesitation or stress scores.
+paralinguistic state: speech activity, Emotion2Vec+ emotion, audio events,
+and composite hesitation or stress scores.
 
 Built for a hackathon integration where a separate voice-agent service
 (ElevenLabs Conversational AI + Claude) will query this service's state
@@ -44,9 +44,9 @@ Verify the Emotion2Vec+ license before broader shipping.
   - License: check the repo (Apache 2.0 at time of writing)
   - Why: keep it for transcript and audio events. Do not treat SenseVoice
     emotion tokens as the primary product emotion signal.
-- Fast numpy acoustic lane for speech activity, arousal, stress, hesitation,
-  speaking confidence, and robust labels such as calm, confident, hesitant,
-  stressed, agitated, subdued, uncertain, and no_speech.
+- Fast numpy acoustic lane for no-speech guardrails, speech activity, arousal,
+  stress, hesitation, speaking confidence, and numeric debug drivers. Do not
+  present its categorical `voice_state` label as a product emotion result.
 - PyAV (av) for decoding webm/opus audio from browser
 - numpy, soundfile for audio processing
 - No frontend framework - a single index.html with vanilla JS for the test UI
@@ -64,7 +64,7 @@ voice-perception/
 │       ├── main.py           # FastAPI app + routes
 │       ├── perception.py     # SenseVoice + Emotion2Vec + acoustic pipeline
 │       ├── emotion.py        # Emotion2Vec+ SER wrapper and label mapping
-│       ├── signals.py        # fast numpy acoustic voice-state lane
+│       ├── signals.py        # fast numpy acoustic metrics and guardrails
 │       ├── session.py        # per-session state manager
 │       ├── audio.py          # webm/opus decoding to PCM
 │       ├── fusion.py         # composite hesitation score logic
@@ -104,6 +104,7 @@ Response:
   "hesitation_score": 0.68,
   "chunks_processed": 7,
   "voice_state": { "label": "hesitant", "confidence": 0.72 },
+  "acoustic_debug": { "voice_state": { "label": "hesitant", "confidence": 0.72 } },
   "signals": {
     "speech_activity": 0.68,
     "arousal": 0.52,
@@ -123,9 +124,11 @@ Additive one-shot test endpoint. Accepts multipart form data with `file` as a
 MediaRecorder-compatible audio blob. Response includes transcript,
 `transcript_partial`, emotion, `emotion_confidence`, events, `hesitation_score`,
 `silence_ratio`, `no_speech`, `inference_ms`, `latency_ms`, and `audio_samples`.
-It also includes additive `voice_state`, `signals`, `signal_events`,
-`score_drivers`, `ser`, and capability/debug fields. Live state may also
-include additive `no_speech`.
+It also includes additive `signals`, `signal_events`, `score_drivers`, `ser`,
+and capability/debug fields. Legacy `voice_state` may still be present for
+non-breaking compatibility, mirrored under `acoustic_debug`, but it is debug-only
+and must not be presented as a product emotion label. Live state may also include
+additive `no_speech`.
 
 ### POST /session/{session_id}/end
 Cleans up the session. Response: `{ "ok": true }`
@@ -213,8 +216,10 @@ with the acoustic hesitation/stress lane when those fields are present.
 9. Emotion2Vec+ is hackathon/demo use until license review is complete. Keep
    the `ser.license_caveat` API field and user-facing copy honest.
 10. `signals.py` documents the deterministic acoustic formulas. It is the
-   primary low-latency product lane for voice state and should stay numpy-only
-   unless a replacement is benchmarked and tested.
+   primary low-latency lane for no-speech detection and numeric acoustic metrics.
+   Its categorical `voice_state` label is retained only as compatibility/debug
+   data and should stay out of product UI unless a replacement is benchmarked
+   and tested.
 
 ## Testing rules
 - Every component must be runnable in isolation. `python -m voice_perception.perception` should be able to run inference on a bundled test WAV.

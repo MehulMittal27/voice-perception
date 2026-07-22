@@ -1,7 +1,7 @@
 # Voice Perception Service
 
-Real-time FastAPI microservice for paralinguistic voice state.
-It ingests microphone audio over WebSocket and exposes live speech activity, acoustic voice state, transcript, audio events, experimental emotion, and hesitation or stress scores.
+Real-time FastAPI microservice for paralinguistic speech perception.
+It ingests microphone audio over WebSocket and exposes live speech activity, transcript, audio events, Emotion2Vec+ emotion, and hesitation or stress scores.
 Use the bundled browser page to test calm vs anxious speech without any other service.
 
 ## Requirements
@@ -23,7 +23,7 @@ uv run uvicorn voice_perception.main:app --reload
 
 Open http://localhost:8000 and click Start for live mode. First startup can take several minutes while SenseVoice and Emotion2Vec+ download and load.
 
-Emotion2Vec+ base (`iic/emotion2vec_plus_base`) is enabled by default as the primary exact-emotion classifier for the hackathon demo. Treat it as demo use until its license is verified for broader shipping. To run only the acoustic plus SenseVoice lanes, set `SER_ENABLED=false`.
+Emotion2Vec+ base (`iic/emotion2vec_plus_base`) is enabled by default as the primary exact-emotion classifier for the hackathon demo. Treat it as demo use until its license is verified for broader shipping. Acoustic features are supporting guardrails and numeric metrics, not categorical emotion labels. To run only the acoustic plus SenseVoice lanes, set `SER_ENABLED=false`.
 
 The page also includes a separate record then submit area for one-shot testing. Click Record, speak for a few seconds, click Stop, then click Submit to upload the completed MediaRecorder audio blob to `POST /classify` and render a single classification result.
 
@@ -38,8 +38,8 @@ See `AGENTS.md` for the full API contract and architecture.
 
 - `POST /session/start` returns a `session_id`
 - `WebSocket /audio/{session_id}` accepts MediaRecorder binary audio chunks
-- `GET /state/{session_id}` returns live transcript, emotion, events, hesitation score, chunk count, `voice_state`, `signals`, `signal_events`, and `ser` debug fields
-- `POST /classify` accepts a multipart `file` audio upload and returns one-shot transcript, emotion, events, hesitation score, latency, audio sample count, `voice_state`, `signals`, `signal_events`, and `ser` debug fields
+- `GET /state/{session_id}` returns live transcript, Emotion2Vec+ emotion, events, hesitation score, chunk count, `signals`, `signal_events`, `score_drivers`, and `ser` debug fields. A legacy `voice_state` object may still appear for compatibility, but it is debug-only and not a product emotion label.
+- `POST /classify` accepts a multipart `file` audio upload and returns one-shot transcript, Emotion2Vec+ emotion, events, hesitation score, latency, audio sample count, `signals`, `signal_events`, `score_drivers`, and `ser` debug fields. A legacy `voice_state` object may still appear for compatibility, but it is debug-only.
 - `POST /session/{session_id}/end` cleans up a session
 - `GET /health` reports service health and model load state
 
@@ -53,7 +53,7 @@ curl -s -X POST http://localhost:8000/session/$SESSION_ID/end
 
 ## One-shot browser test cases
 
-The service responds to paralinguistic audio cues, not guaranteed sentiment of the words alone. The reliable product signal is `voice_state` plus `signals` such as speech activity, arousal, stress, hesitation, speaking confidence, and score drivers. Exact emotion is experimental: Emotion2Vec+ is primary when enabled, while SenseVoice emotion tokens are secondary debug hints.
+The service responds to paralinguistic audio cues, not guaranteed sentiment of the words alone. The product emotion source is Emotion2Vec+ when enabled, with SenseVoice emotion tokens retained only as secondary debug hints. Acoustic features remain useful as guardrails and numeric metrics such as speech activity, arousal, stress, hesitation, speaking confidence, silence ratio, and score drivers. Do not present the legacy acoustic `voice_state` categorical label as an emotion result.
 
 For the clearest comparison, repeat a neutral phrase such as "I need a moment to think" with different delivery:
 
@@ -63,7 +63,7 @@ For the clearest comparison, repeat a neutral phrase such as "I need a moment to
 - Sad or low energy: lower pitch, softer voice, slower pacing.
 - Angry or agitated: sharper attack, louder voice, faster clipped phrasing.
 
-Empirical benchmark reports in firstmate data selected Emotion2Vec+ base because it separated the bundled calm and anxious fixtures while SenseVoice emotion tokens stayed neutral or unknown. The acoustic lane also separates the fixtures through pause and silence drivers without depending on exact emotion.
+Empirical benchmark reports in firstmate data selected Emotion2Vec+ base because it separated the bundled calm and anxious fixtures while SenseVoice emotion tokens stayed neutral or unknown. The acoustic lane also separates the fixtures through pause and silence numeric drivers without depending on categorical acoustic labels.
 
 ## CLI WAV test
 

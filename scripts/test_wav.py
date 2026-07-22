@@ -29,7 +29,7 @@ def analyze_file(path: Path, perception: VoicePerception) -> float:
     buffer = RollingAudioBuffer()
     final_score = 0.0
     print(f"file: {path}")
-    print("chunk emotion    voice_state  events                 silence infer_ms score")
+    print("chunk emotion    speech    events                 silence infer_ms score")
     print("----- ---------- ------------ ---------------------- ------- -------- -----")
     for chunk_index, chunk in iter_chunks(pcm):
         window = buffer.append(chunk)
@@ -45,8 +45,8 @@ def analyze_file(path: Path, perception: VoicePerception) -> float:
 
 def print_row(chunk_index: int, result: dict[str, object], score: float) -> None:
     events = ",".join(result.get("events", [])) or "-"  # type: ignore[arg-type]
-    voice_state = result.get("voice_state", {})
-    label = voice_state.get("label", "unknown") if isinstance(voice_state, dict) else "unknown"
+    signals = result.get("signals", {})
+    label = "no_speech" if signals.get("no_speech") else "speech"
     print(
         f"{chunk_index:>5} {result.get('emotion', 'NEUTRAL'):<10} "
         f"{label:<12.12} {events:<22.22} {result.get('silence_ratio', 0.0):>7.2f} "

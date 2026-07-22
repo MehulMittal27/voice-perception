@@ -1,4 +1,4 @@
-"""Fast numpy acoustic voice-state signals.
+"""Fast numpy acoustic guardrail and metric signals.
 
 This lane is deterministic and language-agnostic. It does not claim exact
 emotion. It estimates speech activity, arousal, stress, hesitation, and
@@ -29,7 +29,7 @@ class AcousticContext:
 
 
 def analyze_acoustic_context(pcm_16khz_mono: np.ndarray) -> dict[str, Any]:
-    """Return additive voice-state fields for a PCM rolling context."""
+    """Return additive acoustic fields for a PCM rolling context."""
 
     started = time.perf_counter()
     pcm = to_float32_mono(pcm_16khz_mono)
@@ -48,7 +48,7 @@ def analyze_acoustic_context(pcm_16khz_mono: np.ndarray) -> dict[str, Any]:
 
 
 def default_acoustic_analysis() -> dict[str, Any]:
-    """Return a stable no-speech voice-state payload."""
+    """Return a stable no-speech acoustic payload."""
 
     return {
         "voice_state": {

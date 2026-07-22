@@ -265,15 +265,15 @@
     <header>
       <div>
         <h1>Voice Perception Test Lab</h1>
-        <p>Real-time speech state, transcript, audio events, and cautious stress or hesitation signals.</p>
+        <p>Real-time transcript, audio events, Emotion2Vec+ emotion, and acoustic guardrails for speech activity, stress, and hesitation.</p>
       </div>
       <button id="toggleButton" type="button">Start</button>
     </header>
 
     <p class="note banner">
-      Exact emotion labels are experimental model outputs, not facts. The demo foregrounds speech activity,
-      acoustic voice state, stress, hesitation, and score drivers. Emotion2Vec+ is the primary exact-emotion
-      model when enabled; SenseVoice emotion tokens are shown only as secondary debug hints.
+      Emotion2Vec+ is the primary exact-emotion model when enabled, but its labels remain experimental model outputs,
+      not facts. Acoustic features are supporting guardrails and numeric metrics for speech activity, stress,
+      hesitation, and score drivers. SenseVoice emotion tokens are shown only as secondary debug hints.
     </p>
 
     <div class="section-heading">
@@ -286,12 +286,12 @@
 
     <section class="grid" aria-live="polite">
       <article class="card">
-        <h2>Voice state</h2>
+        <h2>Acoustic guardrails</h2>
         <div class="emotion-row">
           <div class="pill" id="voiceStatePill">NO SPEECH</div>
           <div class="confidence" id="voiceStateConfidence">signal reliability 1.00</div>
         </div>
-        <p class="muted" style="margin-top: 16px;">Based on speech activity, energy, pauses, pitch movement, and breath-like noise.</p>
+        <p class="muted" style="margin-top: 16px;">Speech detection and numeric acoustic features only. Do not use this as an emotion label.</p>
         <div class="signal-grid">
           <div class="signal-item"><div class="signal-label">Speech activity</div><div class="signal-value" id="speechActivityText">0.00</div></div>
           <div class="signal-item"><div class="signal-label">SNR</div><div class="signal-value" id="snrText">0 dB</div></div>
@@ -354,7 +354,7 @@
       <h2 style="margin-top: 28px;">Practical speaking tests</h2>
       <p>
         Use the same neutral sentence with different delivery. Pass or fail the run on repeated speech activity,
-        pauses, acoustic stress or hesitation, transcript sanity, and latency. Exact emotion remains experimental.
+        pauses, acoustic stress or hesitation, transcript sanity, and latency. Emotion comes from Emotion2Vec+ when enabled and remains experimental.
       </p>
       <ul class="test-list">
         <li><strong>Calm:</strong> steady volume and pace, relaxed tone.</li>
@@ -371,7 +371,7 @@
       <h2 style="margin-top: 28px;">One-shot result</h2>
       <div class="result-grid">
         <div class="result-item"><div class="result-label">Transcript</div><div class="result-value" id="oneShotTranscript">-</div></div>
-        <div class="result-item"><div class="result-label">Voice state</div><div class="result-value" id="oneShotVoiceState">-</div></div>
+        <div class="result-item"><div class="result-label">Acoustic status</div><div class="result-value" id="oneShotVoiceState">-</div></div>
         <div class="result-item"><div class="result-label">Speech activity</div><div class="result-value" id="oneShotSpeechActivity">-</div></div>
         <div class="result-item"><div class="result-label">Stress</div><div class="result-value" id="oneShotStress">-</div></div>
         <div class="result-item"><div class="result-label">Hesitation</div><div class="result-value" id="oneShotHesitation">-</div></div>
@@ -562,12 +562,12 @@
     }
 
     function updateSignalUi(state) {
-      const voiceState = state.voice_state || {};
       const signals = state.signals || {};
-      const label = voiceState.label || (signals.no_speech ? 'no_speech' : 'uncertain');
-      voiceStatePill.textContent = formatLabel(label);
-      voiceStatePill.style.background = labelColor(label);
-      voiceStateConfidence.textContent = `signal reliability ${Number(signals.signal_reliability ?? voiceState.confidence ?? 0).toFixed(2)}`;
+      const noSpeech = Boolean(state.no_speech || signals.no_speech);
+      const acousticStatus = noSpeech ? 'no_speech' : 'speech_detected';
+      voiceStatePill.textContent = formatLabel(acousticStatus);
+      voiceStatePill.style.background = labelColor(acousticStatus);
+      voiceStateConfidence.textContent = `signal reliability ${Number(signals.signal_reliability ?? 0).toFixed(2)}`;
       speechActivityText.textContent = Number(signals.speech_activity || 0).toFixed(2);
       snrText.textContent = `${Number(signals.snr_db || 0).toFixed(1)} dB`;
       const hesitation = clamp(Number(signals.hesitation ?? state.hesitation_score ?? 0), 0, 1);
@@ -690,10 +690,9 @@
     function renderOneShotResult(payload) {
       oneShotRawJson.textContent = JSON.stringify(payload, null, 2);
       const signals = payload.signals || {};
-      const voiceState = payload.voice_state || {};
       const noSpeech = Boolean(payload.no_speech || signals.no_speech);
       oneShotTranscript.textContent = noSpeech ? 'No speech detected' : (payload.transcript || payload.transcript_partial || '(empty)');
-      oneShotVoiceState.textContent = formatLabel(voiceState.label || (noSpeech ? 'no_speech' : 'uncertain'));
+      oneShotVoiceState.textContent = noSpeech ? 'No speech detected' : 'Speech detected';
       oneShotSpeechActivity.textContent = Number(signals.speech_activity || 0).toFixed(2);
       oneShotStress.textContent = Number(signals.stress || 0).toFixed(2);
       oneShotHesitation.textContent = `${Number(signals.hesitation || 0).toFixed(2)} acoustic / ${Number(payload.hesitation_score || 0).toFixed(2)} API`;
@@ -756,6 +755,7 @@
     function labelColor(label) {
       const colors = {
         no_speech: '#60718f',
+        speech_detected: '#19c37d',
         calm: '#19c37d',
         confident: '#1fd17f',
         hesitant: '#f7c948',

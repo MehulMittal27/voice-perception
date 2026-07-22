@@ -139,6 +139,7 @@ def _additive_response_fields(
     if voice_state.get("updated_at") is None:
         voice_state["updated_at"] = _iso_z(updated_at)
     fields["voice_state"] = voice_state
+    fields["acoustic_debug"] = {"voice_state": voice_state}
     for key in _MODEL_DEBUG_KEYS:
         if key in result:
             fields[key] = result[key]
@@ -176,6 +177,8 @@ def _default_capabilities() -> dict[str, Any]:
         "event_labels_supported": True,
         "transcript_supported": True,
         "voice_state_supported": True,
+        "voice_state_debug_only": True,
+        "acoustic_emotion_labels_supported": False,
         "score_drivers_supported": True,
         "ser_license_caveat": config.SER_LICENSE_CAVEAT if config.SER_ENABLED else None,
     }
