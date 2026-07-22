@@ -14,6 +14,7 @@ import numpy as np
 
 from voice_perception import config
 from voice_perception.audio import StreamingAudioDecoder, empty_pcm, to_float32_mono
+from voice_perception.emotion_stability import LiveEmotionStabilizer
 from voice_perception.fusion import HesitationScorer
 from voice_perception.signals import analyze_acoustic_context, default_acoustic_analysis
 
@@ -72,6 +73,7 @@ class SessionState:
     decoder: StreamingAudioDecoder = field(default_factory=StreamingAudioDecoder)
     audio_buffer: RollingAudioBuffer = field(default_factory=RollingAudioBuffer)
     acoustic_result: dict[str, Any] = field(default_factory=default_acoustic_analysis)
+    emotion_stabilizer: LiveEmotionStabilizer = field(default_factory=LiveEmotionStabilizer)
 
     def ingest_audio(self, pcm_16khz_mono: np.ndarray) -> np.ndarray | None:
         self.last_accessed_at = utc_now()
@@ -80,17 +82,19 @@ class SessionState:
         return window
 
     def update(self, result: dict[str, Any]) -> None:
-        self.perception_result = dict(result)
-        self._store_acoustic(result)
-        self.hesitation_score = self.scorer.update(result)
+        stable_result = self.emotion_stabilizer.apply(result)
+        self.perception_result = stable_result
+        self._store_acoustic(stable_result)
+        self.hesitation_score = self.scorer.update(stable_result)
         self.chunks_processed += 1
         self.updated_at = utc_now()
         self.last_accessed_at = self.updated_at
         self._replace_transcript(str(result.get("transcript", "")))
 
     def mark_no_speech(self, result: dict[str, Any]) -> None:
-        self.perception_result = dict(result)
-        self._store_acoustic(result)
+        stable_result = self.emotion_stabilizer.apply({**result, "no_speech": True})
+        self.perception_result = stable_result
+        self._store_acoustic(stable_result)
         self.scorer = HesitationScorer()
         self.hesitation_score = 0.0
         self.updated_at = utc_now()
@@ -166,6 +170,9 @@ _MODEL_DEBUG_KEYS = (
     "sensevoice_emotion_confidence",
     "sensevoice_raw_emotion",
     "ser",
+    "live_raw_emotion",
+    "live_raw_emotion_confidence",
+    "live_stabilized_emotion",
     "capabilities",
 )
 
