@@ -28,10 +28,15 @@ This service does NOT know about ElevenLabs or Claude. It only exposes:
 ## Tech stack (locked)
 - Python 3.11
 - FastAPI + uvicorn (HTTP + WebSocket)
-- funasr-onnx (SenseVoice-Small quantized ONNX)
+- **SenseVoice-Small** via `funasr-onnx` (quantized ONNX runtime)
+  - Upstream: https://github.com/FunAudioLLM/SenseVoice
+  - Model card: https://huggingface.co/FunAudioLLM/SenseVoiceSmall
+  - License: check the repo (Apache 2.0 at time of writing)
+  - Why: single model returns ASR + emotion + audio events in one forward pass;
+    quantized ONNX runs on CPU in ~100-300ms per 1s chunk
 - PyAV (av) for decoding webm/opus audio from browser
 - numpy, soundfile for audio processing
-- No frontend framework — a single index.html with vanilla JS for the test UI
+- No frontend framework - a single index.html with vanilla JS for the test UI
 
 ## Repo structure
 ```
@@ -163,3 +168,18 @@ Keep the weights in config.py so they can be tuned during the demo.
 - No global mutable state except the SessionManager singleton
 - Log at INFO for lifecycle events, DEBUG for per-chunk noise
 - Keep functions under 40 lines; if longer, factor
+
+## Attribution
+
+This service uses SenseVoice-Small by Alibaba's FunAudioLLM team.
+
+Repo: https://github.com/FunAudioLLM/SenseVoice
+
+If we ship this beyond the hackathon, verify license compatibility and add proper attribution in the README and any user-facing demo.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
