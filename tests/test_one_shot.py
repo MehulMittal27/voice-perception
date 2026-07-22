@@ -26,7 +26,11 @@ class HallucinatingModel:
 
 
 class FakePerception:
-    def analyze(self, pcm: np.ndarray) -> dict[str, Any]:
+    def __init__(self) -> None:
+        self.languages: list[str] = []
+
+    def analyze(self, pcm: np.ndarray, language: str | None = None) -> dict[str, Any]:
+        self.languages.append(language or "auto")
         return {
             "transcript": "I need a moment",
             "emotion": "FEARFUL",
@@ -114,8 +118,25 @@ class OneShotEndpointTests(unittest.IsolatedAsyncioTestCase):
         payload = await main._classify_audio_bytes(b"fake audio", "audio/webm")
 
         self.assertEqual(payload["transcript"], "I need a moment")
+        self.assertEqual(payload["language"], "auto")
         self.assertEqual(payload["inference_ms"], 7)
         self.assertEqual(payload["audio_samples"], config.SAMPLE_RATE * 2)
+
+    async def test_classify_endpoint_accepts_language_form_field(self) -> None:
+        fake_perception = FakePerception()
+        main.app.state.perception = fake_perception
+        main.decode_chunk = _fake_decode(config.SAMPLE_RATE)
+
+        status, payload = await _post_multipart_file(
+            b"fake audio",
+            "recording.webm",
+            "audio/webm;codecs=opus",
+            language="de",
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["language"], "de")
+        self.assertEqual(fake_perception.languages, ["de"])
 
 
 def _fake_decode(sample_count: int, amplitude: float = 0.02) -> Callable[[bytes], np.ndarray]:
@@ -137,10 +158,13 @@ def _perception_with_model(model: HallucinatingModel) -> VoicePerception:
 
 
 async def _post_multipart_file(
-    content: bytes, filename: str, content_type: str
+    content: bytes,
+    filename: str,
+    content_type: str,
+    language: str | None = None,
 ) -> tuple[int, dict[str, Any]]:
     boundary = "voiceperceptiontest"
-    body = _multipart_body(boundary, content, filename, content_type)
+    body = _multipart_body(boundary, content, filename, content_type, language)
     events: list[dict[str, Any]] = []
 
     async def receive() -> dict[str, Any]:
@@ -155,14 +179,27 @@ async def _post_multipart_file(
     return status, payload
 
 
-def _multipart_body(boundary: str, content: bytes, filename: str, content_type: str) -> bytes:
-    prefix = (
+def _multipart_body(
+    boundary: str,
+    content: bytes,
+    filename: str,
+    content_type: str,
+    language: str | None = None,
+) -> bytes:
+    file_part = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
         f"Content-Type: {content_type}\r\n\r\n"
-    ).encode("utf-8")
-    suffix = f"\r\n--{boundary}--\r\n".encode("utf-8")
-    return prefix + content + suffix
+    ).encode("utf-8") + content + b"\r\n"
+    language_part = b""
+    if language is not None:
+        language_part = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="language"\r\n\r\n'
+            f"{language}\r\n"
+        ).encode("utf-8")
+    suffix = f"--{boundary}--\r\n".encode("utf-8")
+    return file_part + language_part + suffix
 
 
 def _scope(boundary: str, body_length: int) -> dict[str, Any]:

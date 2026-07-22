@@ -16,6 +16,15 @@ class StaticUiCopyTests(unittest.TestCase):
         self.assertNotIn(">Voice state<", html)
         self.assertNotIn("acoustic voice state", html)
 
+    def test_ui_exposes_transcript_language_dropdown(self) -> None:
+        html = (ROOT / "static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn('id="languageSelect"', html)
+        self.assertIn('<option value="auto">Auto</option>', html)
+        self.assertIn('<option value="en">English</option>', html)
+        self.assertIn('<option value="de">German</option>', html)
+        self.assertIn("formData.append('language', selectedLanguage())", html)
+
 
 if __name__ == "__main__":
     unittest.main()

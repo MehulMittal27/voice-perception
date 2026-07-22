@@ -18,11 +18,13 @@ Verify the Emotion2Vec+ license before broader shipping.
 
 ## Design principles
 1. **Single responsibility** - perception only. No dialogue, no TTS, no LLM.
-2. **Language-agnostic** - must work on any spoken language input, since the
-   downstream use case is multilingual (Ukrainian, Arabic, German, English).
-   SenseVoice ASR only covers 5 languages, but emotion/event detection is
-   paralinguistic and works cross-lingually. We rely on the paralinguistic
-   signals, not the transcript.
+2. **Language-aware and paralinguistic-first** - must work on any spoken
+   language input for paralinguistic state, since the downstream use case is
+   multilingual (Ukrainian, Arabic, German, English). SenseVoice ASR only
+   covers Mandarin, Cantonese, English, Japanese, and Korean, so German
+   transcript uses faster-whisper while emotion/event detection remains
+   paralinguistic and cross-lingual. We rely on paralinguistic signals, not
+   transcript sentiment.
 3. **Testable in isolation** - must be runnable and demonstrable without any
    other service. Ship a browser test page that shows live state.
 4. **Fast enough on a laptop CPU** - target <400ms inference per 1s audio
@@ -41,9 +43,16 @@ Verify the Emotion2Vec+ license before broader shipping.
 - **SenseVoice-Small** via `funasr-onnx` (quantized ONNX runtime)
   - Upstream: https://github.com/FunAudioLLM/SenseVoice
   - Model card: https://huggingface.co/FunAudioLLM/SenseVoiceSmall
-  - License: check the repo (Apache 2.0 at time of writing)
-  - Why: keep it for transcript and audio events. Do not treat SenseVoice
-    emotion tokens as the primary product emotion signal.
+  - License: check the repo and model metadata before broader shipping
+  - Why: keep it for supported-language transcript and audio events. Do not
+    treat SenseVoice emotion tokens as the primary product emotion signal.
+- **German ASR** via `faster-whisper`, default model
+  `Systran/faster-whisper-base`, CPU int8 CTranslate2
+  - Used only when the selected session/classify language is German (`de`).
+  - Feed the same rolling PCM context as SenseVoice. Use fixed language `de`,
+    not per-window auto-detection.
+  - Keep SenseVoice transcript as debug for German and do not expose it as the
+    product transcript.
 - Fast numpy acoustic lane for no-speech guardrails, speech activity, arousal,
   stress, hesitation, speaking confidence, and numeric debug drivers. Do not
   present its categorical `voice_state` label as a product emotion result.
@@ -62,7 +71,8 @@ voice-perception/
 │   └── voice_perception/
 │       ├── __init__.py
 │       ├── main.py           # FastAPI app + routes
-│       ├── perception.py     # SenseVoice + Emotion2Vec + acoustic pipeline
+│       ├── perception.py     # SenseVoice + German ASR + Emotion2Vec + acoustic pipeline
+│       ├── transcription.py  # faster-whisper German transcript adapter and language routing
 │       ├── emotion.py        # Emotion2Vec+ SER wrapper and label mapping
 │       ├── signals.py        # fast numpy acoustic metrics and guardrails
 │       ├── session.py        # per-session state manager
@@ -82,8 +92,12 @@ voice-perception/
 ## API contract (this is the integration surface - do not change without updating consumers)
 
 ### POST /session/start
-Request: `{}` (empty)
+Request: `{}` (empty) or `{ "language": "auto" | "en" | "de" }`
 Response: `{ "session_id": "<uuid>" }`
+
+German (`de`) routes transcript through faster-whisper. English (`en`) uses
+SenseVoice with fixed English. `auto` preserves the default SenseVoice language
+configuration.
 
 ### WebSocket /audio/{session_id}
 Client sends binary frames of webm/opus audio (MediaRecorder default output).
@@ -98,6 +112,13 @@ Response:
   "session_id": "<uuid>",
   "updated_at": "2026-07-22T22:14:03.123Z",
   "transcript_partial": "guten tag ich habe",
+  "language": "de",
+  "transcript_source": "faster_whisper",
+  "transcript_backend": "faster_whisper",
+  "transcript_model": "Systran/faster-whisper-base",
+  "transcript_language": "de",
+  "transcript_latency_ms": 382,
+  "sensevoice_transcript": "gibberish debug only",
   "emotion": "FEARFUL",
   "emotion_confidence": 0.72,
   "live_raw_emotion": "NEUTRAL",
@@ -126,8 +147,9 @@ If no state yet: return defaults (emotion NEUTRAL, hesitation 0.0, empty events)
 
 ### POST /classify
 Additive one-shot test endpoint. Accepts multipart form data with `file` as a
-MediaRecorder-compatible audio blob. Response includes transcript,
-`transcript_partial`, emotion, `emotion_confidence`, events, `hesitation_score`,
+MediaRecorder-compatible audio blob and optional `language` form field (`auto`,
+`en`, or `de`). Response includes transcript, `transcript_partial`, language,
+emotion, `emotion_confidence`, events, `hesitation_score`,
 `silence_ratio`, `no_speech`, `inference_ms`, `latency_ms`, and `audio_samples`.
 It also includes additive `signals`, `signal_events`, `score_drivers`, `ser`,
 and capability/debug fields. Legacy `voice_state` may still be present for
@@ -220,9 +242,16 @@ with the acoustic hesitation/stress lane when those fields are present.
    PCM context used for SenseVoice, not isolated 1 second slices. Live session
    state stabilizes the displayed emotion with `LIVE_EMOTION_*` config knobs;
    do not apply only UI-side smoothing or change one-shot `/classify` to use it.
-9. Emotion2Vec+ is hackathon/demo use until license review is complete. Keep
+9. German transcript is loaded through `faster-whisper` and controlled by
+   `GERMAN_ASR_ENABLED`, `GERMAN_ASR_MODEL`, `GERMAN_ASR_COMPUTE_TYPE`,
+   `GERMAN_ASR_THREADS`, `GERMAN_ASR_PRELOAD`, `GERMAN_ASR_BEAM_SIZE`, and
+   `GERMAN_ASR_MIN_CONTEXT_SECONDS`. It is called only after the no-speech
+   guard passes and only when the selected language normalizes to `de`. Keep
+   SenseVoice events, but do not use SenseVoice transcript as the German
+   product transcript.
+10. Emotion2Vec+ is hackathon/demo use until license review is complete. Keep
    the `ser.license_caveat` API field and user-facing copy honest.
-10. `signals.py` documents the deterministic acoustic formulas. It is the
+11. `signals.py` documents the deterministic acoustic formulas. It is the
    primary low-latency lane for no-speech detection and numeric acoustic metrics.
    Its categorical `voice_state` label is retained only as compatibility/debug
    data and should stay out of product UI unless a replacement is benchmarked
@@ -235,7 +264,7 @@ with the acoustic hesitation/stress lane when those fields are present.
 
 ## Non-goals (do not build these)
 - User accounts, auth, or persistence
-- Multi-language ASR beyond what SenseVoice ships with
+- Additional production ASR expansion beyond the explicit German faster-whisper lane
 - TTS or dialogue generation
 - Cloud deployment scripts
 
@@ -255,6 +284,10 @@ Repo: https://github.com/FunAudioLLM/SenseVoice
 This service also uses FunASR Emotion2Vec+ base for hackathon/demo SER.
 Verify the Emotion2Vec+ license before shipping beyond the hackathon and add
 proper attribution in the README and any user-facing demo.
+
+German transcript uses faster-whisper and CTranslate2 with the default
+`Systran/faster-whisper-base` model. Verify final model license metadata before
+broader shipping and keep attribution in user-facing docs.
 
 ## Maintaining this file
 

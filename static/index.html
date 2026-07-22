@@ -70,6 +70,31 @@
       background: linear-gradient(135deg, var(--blue), #bfdbfe);
       box-shadow: 0 18px 50px rgba(98, 168, 255, 0.25);
     }
+    select {
+      min-width: 160px;
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 999px;
+      padding: 12px 18px;
+      color: var(--text);
+      background: rgba(255,255,255,0.08);
+      font: inherit;
+      font-weight: 800;
+    }
+    select:disabled { opacity: 0.55; cursor: wait; }
+    .live-controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .language-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-weight: 800;
+    }
     .status {
       display: inline-flex;
       align-items: center;
@@ -281,7 +306,17 @@
         <h2>Live streaming mode</h2>
         <p>Continuous WebSocket microphone ingestion. Acoustic signals update quickly; transcript and model labels wait for rolling context.</p>
       </div>
-      <div class="status" id="status"><span class="dot"></span><span id="statusText">Idle</span></div>
+      <div class="live-controls">
+        <label class="language-control" for="languageSelect">
+          <span>Language</span>
+          <select id="languageSelect" name="language">
+            <option value="auto">Auto</option>
+            <option value="en">English</option>
+            <option value="de">German</option>
+          </select>
+        </label>
+        <div class="status" id="status"><span class="dot"></span><span id="statusText">Idle</span></div>
+      </div>
     </div>
 
     <section class="grid" aria-live="polite">
@@ -387,6 +422,7 @@
 
   <script>
     const toggleButton = document.getElementById('toggleButton');
+    const languageSelect = document.getElementById('languageSelect');
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('statusText');
     const transcriptEl = document.getElementById('transcript');
@@ -438,6 +474,8 @@
     let oneShotBlob = null;
     let oneShotObjectUrl = null;
 
+    initLanguageDefault();
+
     toggleButton.addEventListener('click', () => {
       if (running) {
         stopSession();
@@ -460,7 +498,7 @@
       setBusy(true);
       try {
         setStatus('Connecting', '');
-        const session = await postJson('/session/start', {});
+        const session = await postJson('/session/start', { language: selectedLanguage() });
         sessionId = session.session_id;
         socket = await openSocket(sessionId);
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -676,6 +714,7 @@
       try {
         const formData = new FormData();
         formData.append('file', oneShotBlob, oneShotFileName(oneShotBlob.type));
+        formData.append('language', selectedLanguage());
         const response = await fetch('/classify', { method: 'POST', body: formData });
         if (!response.ok) throw new Error(`/classify ${response.status}`);
         const payload = await response.json();
@@ -803,6 +842,19 @@
       return response.json();
     }
 
+    function selectedLanguage() {
+      return languageSelect ? languageSelect.value : 'auto';
+    }
+
+    function initLanguageDefault() {
+      const browserLanguage = (navigator.language || '').toLowerCase();
+      if (browserLanguage.startsWith('de')) {
+        languageSelect.value = 'de';
+      } else if (browserLanguage.startsWith('en')) {
+        languageSelect.value = 'en';
+      }
+    }
+
     function setStatus(text, mode) {
       statusText.textContent = text;
       statusEl.className = `status ${mode || ''}`;
@@ -810,6 +862,7 @@
 
     function setBusy(isBusy) {
       toggleButton.disabled = isBusy;
+      languageSelect.disabled = isBusy || running;
     }
 
     function clamp(value, min, max) {

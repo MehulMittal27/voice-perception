@@ -17,6 +17,7 @@ from voice_perception.audio import StreamingAudioDecoder, empty_pcm, to_float32_
 from voice_perception.emotion_stability import LiveEmotionStabilizer
 from voice_perception.fusion import HesitationScorer
 from voice_perception.signals import analyze_acoustic_context, default_acoustic_analysis
+from voice_perception.transcription import normalize_language_selection
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class RollingAudioBuffer:
 @dataclass
 class SessionState:
     session_id: str
+    language: str = "auto"
     scorer: HesitationScorer = field(default_factory=HesitationScorer)
     transcript_text: str = ""
     updated_at: datetime = field(default_factory=utc_now)
@@ -108,6 +110,7 @@ class SessionState:
             "session_id": self.session_id,
             "updated_at": _iso_z(self.updated_at),
             "transcript_partial": self.transcript_partial,
+            "language": self.language,
             "emotion": result.get("emotion", "NEUTRAL"),
             "emotion_confidence": float(result.get("emotion_confidence", 0.0)),
             "events": list(result.get("events", [])),
@@ -173,6 +176,18 @@ _MODEL_DEBUG_KEYS = (
     "live_raw_emotion",
     "live_raw_emotion_confidence",
     "live_stabilized_emotion",
+    "transcript_source",
+    "transcript_backend",
+    "transcript_model",
+    "transcript_language",
+    "transcript_latency_ms",
+    "transcript_skipped",
+    "transcript_skip_reason",
+    "transcript_error",
+    "sensevoice_transcript",
+    "sensevoice_language",
+    "asr_detected_language",
+    "asr_detected_language_probability",
     "capabilities",
 )
 
@@ -183,6 +198,8 @@ def _default_capabilities() -> dict[str, Any]:
         "emotion_probabilities_calibrated": False,
         "event_labels_supported": True,
         "transcript_supported": True,
+        "german_transcript_supported": config.GERMAN_ASR_ENABLED,
+        "german_transcript_model": config.GERMAN_ASR_MODEL if config.GERMAN_ASR_ENABLED else None,
         "voice_state_supported": True,
         "voice_state_debug_only": True,
         "acoustic_emotion_labels_supported": False,
@@ -209,11 +226,15 @@ class SessionManager:
         self._lock = threading.RLock()
         self.__class__._initialized = True
 
-    def create_session(self) -> str:
+    def create_session(self, language: str | None = None) -> str:
         session_id = str(uuid.uuid4())
+        selected_language = normalize_language_selection(language)
         with self._lock:
-            self.sessions[session_id] = SessionState(session_id=session_id)
-        logger.info("event=session_created session_id=%s", session_id)
+            self.sessions[session_id] = SessionState(
+                session_id=session_id,
+                language=selected_language,
+            )
+        logger.info("event=session_created session_id=%s language=%s", session_id, selected_language)
         return session_id
 
     def get(self, session_id: str) -> SessionState | None:

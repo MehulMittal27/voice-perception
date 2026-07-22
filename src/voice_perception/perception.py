@@ -27,6 +27,14 @@ from voice_perception.audio import (
 )
 from voice_perception.emotion import Emotion2VecClassifier
 from voice_perception.signals import analyze_acoustic_context
+from voice_perception.transcription import (
+    FasterWhisperTranscriber,
+    is_german_language,
+    normalize_language_selection,
+    sensevoice_language_for,
+    sensevoice_transcript_fields,
+    transcript_not_called,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +67,7 @@ class VoicePerception:
         start = time.perf_counter()
         self.model = self._load_model()
         self.ser = Emotion2VecClassifier(preload=config.SER_PRELOAD)
+        self.german_transcriber = FasterWhisperTranscriber(preload=config.GERMAN_ASR_PRELOAD)
         self.load_ms = int((time.perf_counter() - start) * 1000)
         logger.info(
             "event=model_loaded model_dir=%s ser_enabled=%s load_ms=%d",
@@ -67,28 +76,65 @@ class VoicePerception:
             self.load_ms,
         )
 
-    def analyze(self, pcm_16khz_mono: np.ndarray) -> dict[str, Any]:
+    def analyze(self, pcm_16khz_mono: np.ndarray, language: str | None = None) -> dict[str, Any]:
+        selected_language = normalize_language_selection(language)
         pcm = to_float32_mono(pcm_16khz_mono)
         activity = analyze_speech_activity(pcm)
         acoustic = analyze_acoustic_context(pcm)
         if pcm.size < config.MIN_INFERENCE_SAMPLES:
             return _attach_additive_fields(
-                self._empty_result(activity.silence_ratio), acoustic, _ser_not_called("min_context")
+                self._empty_result(activity.silence_ratio, selected_language, "min_context"),
+                acoustic,
+                _ser_not_called("min_context"),
             )
         if not activity.has_speech:
             return _attach_additive_fields(
-                self._no_speech_result(activity), acoustic, _ser_not_called("no_speech")
+                self._no_speech_result(activity, selected_language),
+                acoustic,
+                _ser_not_called("no_speech"),
             )
         start = time.perf_counter()
+        sensevoice_language = sensevoice_language_for(selected_language)
         with self._lock:
-            raw_output = self._infer(pcm)
+            raw_output = self._infer(pcm, sensevoice_language)
         inference_ms = int((time.perf_counter() - start) * 1000)
         parsed = parse_sensevoice_output(raw_output)
         parsed["silence_ratio"] = activity.silence_ratio
         parsed["inference_ms"] = inference_ms
         parsed["no_speech"] = False
+        self._apply_transcript_lane(parsed, pcm, selected_language, sensevoice_language)
         ser_result = self._analyze_ser(pcm, activity)
         return _attach_additive_fields(parsed, acoustic, ser_result)
+
+    def _apply_transcript_lane(
+        self,
+        parsed: dict[str, Any],
+        pcm: np.ndarray,
+        language: str,
+        sensevoice_language: str,
+    ) -> None:
+        sensevoice_transcript = str(parsed.get("transcript", ""))
+        parsed.update(
+            sensevoice_transcript_fields(
+                sensevoice_transcript,
+                language,
+                int(parsed.get("inference_ms", 0)),
+                self.model_dir,
+            )
+        )
+        parsed["sensevoice_language"] = sensevoice_language
+        if not is_german_language(language):
+            return
+        transcriber = getattr(self, "german_transcriber", None)
+        if transcriber is None:
+            german_result = transcript_not_called(language, "not_configured")
+            german_result["transcript"] = ""
+        else:
+            german_result = transcriber.analyze(pcm, language="de")
+        parsed["transcript"] = str(german_result.get("transcript", ""))
+        parsed.update(german_result)
+        parsed["sensevoice_transcript"] = sensevoice_transcript
+        parsed["sensevoice_language"] = sensevoice_language
 
     def _analyze_ser(self, pcm: np.ndarray, activity: SpeechActivity) -> dict[str, Any]:
         ser = getattr(self, "ser", None)
@@ -149,26 +195,26 @@ class VoicePerception:
             raise RuntimeError("Could not download SenseVoice SentencePiece tokenizer model.")
         shutil.copyfile(source, bpe_path)
 
-    def _infer(self, pcm: np.ndarray) -> Any:
+    def _infer(self, pcm: np.ndarray, language: str) -> Any:
         if self._input_mode == "file":
-            return self._infer_file(pcm)
+            return self._infer_file(pcm, language)
         try:
-            output = self._infer_numpy(pcm)
+            output = self._infer_numpy(pcm, language)
             self._input_mode = "numpy"
             return output
         except Exception as exc:
             logger.info("event=model_numpy_input_failed fallback=file error=%s", exc)
             self._input_mode = "file"
-            return self._infer_file(pcm)
+            return self._infer_file(pcm, language)
 
-    def _infer_numpy(self, pcm: np.ndarray) -> Any:
+    def _infer_numpy(self, pcm: np.ndarray, language: str) -> Any:
         return self.model(
             np.ascontiguousarray(pcm, dtype=np.float32),
-            language=config.SENSEVOICE_LANGUAGE,
+            language=language,
             textnorm="withitn",
         )
 
-    def _infer_file(self, pcm: np.ndarray) -> Any:
+    def _infer_file(self, pcm: np.ndarray, language: str) -> Any:
         temp_path: str | None = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
@@ -176,7 +222,7 @@ class VoicePerception:
             sf.write(temp_path, pcm, config.SAMPLE_RATE, subtype="PCM_16")
             return self.model(
                 temp_path,
-                language=config.SENSEVOICE_LANGUAGE,
+                language=language,
                 textnorm="withitn",
             )
         finally:
@@ -184,8 +230,8 @@ class VoicePerception:
                 Path(temp_path).unlink(missing_ok=True)
 
     @staticmethod
-    def _empty_result(silence_ratio: float) -> dict[str, Any]:
-        return {
+    def _empty_result(silence_ratio: float, language: str, reason: str) -> dict[str, Any]:
+        result = {
             "transcript": "",
             "emotion": "NEUTRAL",
             "emotion_confidence": 0.0,
@@ -195,10 +241,12 @@ class VoicePerception:
             "inference_ms": 0,
             "no_speech": True,
         }
+        result.update(transcript_not_called(language, reason))
+        return result
 
     @staticmethod
-    def _no_speech_result(activity: SpeechActivity) -> dict[str, Any]:
-        return {
+    def _no_speech_result(activity: SpeechActivity, language: str) -> dict[str, Any]:
+        result = {
             "transcript": "",
             "emotion": "NEUTRAL",
             "emotion_confidence": 0.0,
@@ -208,6 +256,8 @@ class VoicePerception:
             "inference_ms": 0,
             "no_speech": True,
         }
+        result.update(transcript_not_called(language, "no_speech"))
+        return result
 
 
 def _attach_additive_fields(
@@ -278,6 +328,8 @@ def _capabilities(ser_enabled: bool) -> dict[str, Any]:
         "emotion_probabilities_calibrated": False,
         "event_labels_supported": True,
         "transcript_supported": True,
+        "german_transcript_supported": config.GERMAN_ASR_ENABLED,
+        "german_transcript_model": config.GERMAN_ASR_MODEL if config.GERMAN_ASR_ENABLED else None,
         "voice_state_supported": True,
         "voice_state_debug_only": True,
         "acoustic_emotion_labels_supported": False,
@@ -380,14 +432,15 @@ def _clip(value: float) -> float:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run SenseVoice perception on a WAV file.")
+    parser = argparse.ArgumentParser(description="Run voice perception on a WAV file.")
     parser.add_argument("wav_file", type=Path)
+    parser.add_argument("--language", default="auto", help="Transcript language: auto, en, or de")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     pcm = load_wav_16khz_mono(args.wav_file)
     with contextlib.redirect_stdout(sys.stderr):
         perception = VoicePerception()
-        result = perception.analyze(pcm)
+        result = perception.analyze(pcm, language=args.language)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
