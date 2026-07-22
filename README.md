@@ -7,17 +7,18 @@ Use the bundled browser page to test calm vs anxious speech without any other se
 ## Requirements
 
 - Python 3.11
+- uv (`brew install uv` if missing)
 - About 500 MB free disk for the SenseVoice model cache
 - Browser microphone access
 
 ## Setup
 
 ```bash
-python3.11 -m venv .venv
+uv venv --python 3.11
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-uvicorn voice_perception.main:app --reload
+uv pip install -r requirements.txt
+uv pip install -e .
+uv run uvicorn voice_perception.main:app --reload
 ```
 
 Open http://localhost:8000 and click Start. First startup can take 1 to 3 minutes while SenseVoice downloads and loads.
@@ -43,9 +44,9 @@ curl -s -X POST http://localhost:8000/session/$SESSION_ID/end
 ## CLI WAV test
 
 ```bash
-python -m voice_perception.perception tests/fixtures/calm.wav
-python scripts/test_wav.py tests/fixtures/anxious.wav
-python scripts/test_wav.py --compare tests/fixtures/calm.wav tests/fixtures/anxious.wav
+uv run python -m voice_perception.perception tests/fixtures/calm.wav
+uv run python scripts/test_wav.py tests/fixtures/anxious.wav
+uv run python scripts/test_wav.py --compare tests/fixtures/calm.wav tests/fixtures/anxious.wav
 ```
 
 ## Troubleshooting
