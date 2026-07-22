@@ -38,6 +38,35 @@ SENSEVOICE_DEVICE_ID = os.getenv("SENSEVOICE_DEVICE_ID", "-1")
 SENSEVOICE_THREADS = int(os.getenv("SENSEVOICE_THREADS", "4"))
 SENSEVOICE_LANGUAGE = os.getenv("SENSEVOICE_LANGUAGE", "auto").strip().lower() or "auto"
 
+SER_ENABLED = os.getenv("SER_ENABLED", "true").lower() not in {"0", "false", "no"}
+SER_MODEL_DIR = os.getenv("SER_MODEL_DIR", "iic/emotion2vec_plus_base")
+SER_CACHE_DIR = os.getenv("SER_CACHE_DIR", ".cache/modelscope")
+SER_THREADS = int(os.getenv("SER_THREADS", "4"))
+SER_PRELOAD = os.getenv("SER_PRELOAD", "true").lower() not in {"0", "false", "no"}
+SER_MIN_CONTEXT_SECONDS = float(os.getenv("SER_MIN_CONTEXT_SECONDS", "1.0"))
+SER_MIN_CONTEXT_SAMPLES = max(
+    MIN_INFERENCE_SAMPLES,
+    int(SAMPLE_RATE * SER_MIN_CONTEXT_SECONDS),
+)
+SER_LICENSE_CAVEAT = "hackathon_demo_license_pending"
+
+ACOUSTIC_FRAME_MS = int(os.getenv("ACOUSTIC_FRAME_MS", "20"))
+ACOUSTIC_HOP_MS = int(os.getenv("ACOUSTIC_HOP_MS", "10"))
+ACOUSTIC_PITCH_FRAME_MS = int(os.getenv("ACOUSTIC_PITCH_FRAME_MS", "40"))
+ACOUSTIC_MIN_SPEECH_SECONDS = float(os.getenv("ACOUSTIC_MIN_SPEECH_SECONDS", "0.08"))
+ACOUSTIC_BASELINE_ENERGY_DB = float(os.getenv("ACOUSTIC_BASELINE_ENERGY_DB", "-28.0"))
+ACOUSTIC_BASELINE_ENERGY_IQR_DB = float(os.getenv("ACOUSTIC_BASELINE_ENERGY_IQR_DB", "8.0"))
+ACOUSTIC_BASELINE_F0_RANGE_ST = float(os.getenv("ACOUSTIC_BASELINE_F0_RANGE_ST", "6.0"))
+ACOUSTIC_BASELINE_RATE = float(os.getenv("ACOUSTIC_BASELINE_RATE", "3.5"))
+ACOUSTIC_BASELINE_PAUSE_RATIO = float(os.getenv("ACOUSTIC_BASELINE_PAUSE_RATIO", "0.12"))
+ACOUSTIC_SIGNAL_DEBUG = os.getenv("ACOUSTIC_SIGNAL_DEBUG", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+ACOUSTIC_HESITATION_FUSION_WEIGHT = float(os.getenv("ACOUSTIC_HESITATION_FUSION_WEIGHT", "0.65"))
+ACOUSTIC_STRESS_FUSION_WEIGHT = float(os.getenv("ACOUSTIC_STRESS_FUSION_WEIGHT", "0.35"))
+
 EMOTION_STRESS = {
     "FEARFUL": 0.9,
     "SAD": 0.6,

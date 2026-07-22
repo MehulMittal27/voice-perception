@@ -2,7 +2,8 @@
 
 ## What this is
 A standalone microservice that listens to live audio and emits a real-time
-paralinguistic state: emotion, audio events, and a composite hesitation score.
+paralinguistic state: speech activity, acoustic voice state, experimental
+emotion, audio events, and composite hesitation or stress scores.
 
 Built for a hackathon integration where a separate voice-agent service
 (ElevenLabs Conversational AI + Claude) will query this service's state
@@ -11,6 +12,9 @@ inside its own LLM callback to make dialogue adaptive.
 This service does NOT know about ElevenLabs or Claude. It only exposes:
 - WebSocket audio ingestion
 - HTTP state retrieval
+
+The best demo path uses Emotion2Vec+ as an experimental hackathon SER lane.
+Verify the Emotion2Vec+ license before broader shipping.
 
 ## Design principles
 1. **Single responsibility** - perception only. No dialogue, no TTS, no LLM.
@@ -28,12 +32,21 @@ This service does NOT know about ElevenLabs or Claude. It only exposes:
 ## Tech stack (locked)
 - Python 3.11
 - FastAPI + uvicorn (HTTP + WebSocket)
+- **Emotion2Vec+ base** via `funasr`, model `iic/emotion2vec_plus_base`
+  - Primary exact-emotion classifier for the hackathon demo
+  - Labels are mapped to ANGRY, DISGUSTED, FEARFUL, HAPPY, NEUTRAL, SAD,
+    SURPRISED. Other, unknown, or unmapped labels become NEUTRAL confidence 0.
+  - License caveat: ModelScope/HF metadata must be verified before shipping
+    outside hackathon or demo use.
 - **SenseVoice-Small** via `funasr-onnx` (quantized ONNX runtime)
   - Upstream: https://github.com/FunAudioLLM/SenseVoice
   - Model card: https://huggingface.co/FunAudioLLM/SenseVoiceSmall
   - License: check the repo (Apache 2.0 at time of writing)
-  - Why: single model returns ASR + emotion + audio events in one forward pass;
-    quantized ONNX runs on CPU in ~100-300ms per 1s chunk
+  - Why: keep it for transcript and audio events. Do not treat SenseVoice
+    emotion tokens as the primary product emotion signal.
+- Fast numpy acoustic lane for speech activity, arousal, stress, hesitation,
+  speaking confidence, and robust labels such as calm, confident, hesitant,
+  stressed, agitated, subdued, uncertain, and no_speech.
 - PyAV (av) for decoding webm/opus audio from browser
 - numpy, soundfile for audio processing
 - No frontend framework - a single index.html with vanilla JS for the test UI
@@ -49,7 +62,9 @@ voice-perception/
 │   └── voice_perception/
 │       ├── __init__.py
 │       ├── main.py           # FastAPI app + routes
-│       ├── perception.py     # SenseVoice model wrapper
+│       ├── perception.py     # SenseVoice + Emotion2Vec + acoustic pipeline
+│       ├── emotion.py        # Emotion2Vec+ SER wrapper and label mapping
+│       ├── signals.py        # fast numpy acoustic voice-state lane
 │       ├── session.py        # per-session state manager
 │       ├── audio.py          # webm/opus decoding to PCM
 │       ├── fusion.py         # composite hesitation score logic
@@ -59,7 +74,9 @@ voice-perception/
 ├── scripts/
 │   └── test_wav.py           # CLI test against a WAV file
 └── tests/
-    └── test_fusion.py        # unit tests for scoring logic
+    ├── test_fusion.py        # unit tests for scoring logic
+    ├── test_emotion2vec.py   # SER label mapping and no-speech guard tests
+    └── test_signals.py       # acoustic signal tests against silence and fixtures
 ```
 
 ## API contract (this is the integration surface - do not change without updating consumers)
@@ -70,7 +87,7 @@ Response: `{ "session_id": "<uuid>" }`
 
 ### WebSocket /audio/{session_id}
 Client sends binary frames of webm/opus audio (MediaRecorder default output).
-Recommended chunk interval: 1000ms.
+Recommended chunk interval: 200ms for fast acoustic updates. Model inference still waits for rolling context.
 Server acknowledges each chunk with a small JSON message:
 `{ "chunk_processed": true, "latency_ms": 234 }`
 
@@ -85,7 +102,17 @@ Response:
   "emotion_confidence": 0.72,
   "events": ["Breath"],
   "hesitation_score": 0.68,
-  "chunks_processed": 7
+  "chunks_processed": 7,
+  "voice_state": { "label": "hesitant", "confidence": 0.72 },
+  "signals": {
+    "speech_activity": 0.68,
+    "arousal": 0.52,
+    "stress": 0.49,
+    "hesitation": 0.44,
+    "speaking_confidence": 0.38,
+    "signal_reliability": 0.82
+  },
+  "ser": { "label": "FEARFUL", "raw_label": "fearful", "experimental": true }
 }
 ```
 
@@ -96,7 +123,9 @@ Additive one-shot test endpoint. Accepts multipart form data with `file` as a
 MediaRecorder-compatible audio blob. Response includes transcript,
 `transcript_partial`, emotion, `emotion_confidence`, events, `hesitation_score`,
 `silence_ratio`, `no_speech`, `inference_ms`, `latency_ms`, and `audio_samples`.
-Live state may also include additive `no_speech`.
+It also includes additive `voice_state`, `signals`, `signal_events`,
+`score_drivers`, `ser`, and capability/debug fields. Live state may also
+include additive `no_speech`.
 
 ### POST /session/{session_id}/end
 Cleans up the session. Response: `{ "ok": true }`
@@ -107,9 +136,10 @@ Response: `{ "status": "ok", "model_loaded": true }`
 ## Hesitation score fusion (this is the "secret sauce" - get it right)
 
 Inputs per chunk:
-- SenseVoice emotion label + confidence
+- Emotion2Vec+ emotion label + confidence when `SER_ENABLED=true`
 - SenseVoice audio events (Breath, Cough, Cry, etc.)
 - Silence ratio in the chunk (from VAD or simple energy threshold)
+- Fast acoustic hesitation and stress from `signals.py`
 - Time since last non-silent chunk
 
 Scoring (all clipped to [0, 1]):
@@ -143,7 +173,9 @@ hesitation_score = clip(
 Smooth across chunks with exponential moving average, alpha = 0.4, so a single
 noisy chunk doesn't spike the score.
 
-Keep the weights in config.py so they can be tuned during the demo.
+Keep the weights in config.py so they can be tuned during the demo. The public
+`hesitation_score` remains backward compatible, but `fusion.py` can lift it
+with the acoustic hesitation/stress lane when those fields are present.
 
 ## Known unknowns to verify at build time
 1. Verified against `funasr-onnx==0.4.1`: `SenseVoiceSmall.__call__` accepts
@@ -172,8 +204,17 @@ Keep the weights in config.py so they can be tuned during the demo.
    calls; short chunks can cause auto-language flips and garbage transcripts.
    For English-only demos, set `SENSEVOICE_LANGUAGE=en`.
 7. Both live and one-shot paths use the configurable no-speech guard in
-   `perception.py` before SenseVoice inference to avoid hallucinated transcript
-   or `Speech` events on silence.
+   `perception.py` before SenseVoice and Emotion2Vec+ inference to avoid
+   hallucinated transcript, `Speech` events, or emotion labels on silence.
+8. Emotion2Vec+ base is loaded through `funasr.AutoModel` and controlled by
+   `SER_ENABLED`, `SER_MODEL_DIR`, `SER_CACHE_DIR`, `SER_THREADS`,
+   `SER_PRELOAD`, and `SER_MIN_CONTEXT_SECONDS`. Feed it the same live rolling
+   PCM context used for SenseVoice, not isolated 1 second slices.
+9. Emotion2Vec+ is hackathon/demo use until license review is complete. Keep
+   the `ser.license_caveat` API field and user-facing copy honest.
+10. `signals.py` documents the deterministic acoustic formulas. It is the
+   primary low-latency product lane for voice state and should stay numpy-only
+   unless a replacement is benchmarked and tested.
 
 ## Testing rules
 - Every component must be runnable in isolation. `python -m voice_perception.perception` should be able to run inference on a bundled test WAV.
@@ -199,7 +240,9 @@ This service uses SenseVoice-Small by Alibaba's FunAudioLLM team.
 
 Repo: https://github.com/FunAudioLLM/SenseVoice
 
-If we ship this beyond the hackathon, verify license compatibility and add proper attribution in the README and any user-facing demo.
+This service also uses FunASR Emotion2Vec+ base for hackathon/demo SER.
+Verify the Emotion2Vec+ license before shipping beyond the hackathon and add
+proper attribution in the README and any user-facing demo.
 
 ## Maintaining this file
 

@@ -15,6 +15,7 @@ import numpy as np
 from voice_perception import config
 from voice_perception.audio import StreamingAudioDecoder, empty_pcm, to_float32_mono
 from voice_perception.fusion import HesitationScorer
+from voice_perception.signals import analyze_acoustic_context, default_acoustic_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ class RollingAudioBuffer:
     def samples(self) -> int:
         return int(self._samples.size)
 
+    def snapshot(self) -> np.ndarray:
+        return self._samples.copy()
+
     def _ready_for_inference(self) -> bool:
         if self._samples.size < self.min_samples:
             return False
@@ -67,13 +71,17 @@ class SessionState:
     chunks_processed: int = 0
     decoder: StreamingAudioDecoder = field(default_factory=StreamingAudioDecoder)
     audio_buffer: RollingAudioBuffer = field(default_factory=RollingAudioBuffer)
+    acoustic_result: dict[str, Any] = field(default_factory=default_acoustic_analysis)
 
     def ingest_audio(self, pcm_16khz_mono: np.ndarray) -> np.ndarray | None:
         self.last_accessed_at = utc_now()
-        return self.audio_buffer.append(pcm_16khz_mono)
+        window = self.audio_buffer.append(pcm_16khz_mono)
+        self._update_acoustic_from_buffer()
+        return window
 
     def update(self, result: dict[str, Any]) -> None:
         self.perception_result = dict(result)
+        self._store_acoustic(result)
         self.hesitation_score = self.scorer.update(result)
         self.chunks_processed += 1
         self.updated_at = utc_now()
@@ -82,6 +90,7 @@ class SessionState:
 
     def mark_no_speech(self, result: dict[str, Any]) -> None:
         self.perception_result = dict(result)
+        self._store_acoustic(result)
         self.scorer = HesitationScorer()
         self.hesitation_score = 0.0
         self.updated_at = utc_now()
@@ -91,7 +100,7 @@ class SessionState:
     def to_response(self) -> dict[str, Any]:
         self.last_accessed_at = utc_now()
         result = self.perception_result or _default_perception_result()
-        return {
+        response = {
             "session_id": self.session_id,
             "updated_at": _iso_z(self.updated_at),
             "transcript_partial": self.transcript_partial,
@@ -102,6 +111,8 @@ class SessionState:
             "chunks_processed": self.chunks_processed,
             "no_speech": bool(result.get("no_speech", False)),
         }
+        response.update(_additive_response_fields(result, self.acoustic_result, self.updated_at))
+        return response
 
     @property
     def transcript_partial(self) -> str:
@@ -109,6 +120,65 @@ class SessionState:
 
     def _replace_transcript(self, transcript: str) -> None:
         self.transcript_text = transcript.strip()[-config.TRANSCRIPT_MAX_CHARS :]
+
+    def _update_acoustic_from_buffer(self) -> None:
+        context = self.audio_buffer.snapshot()
+        if context.size:
+            self.acoustic_result = analyze_acoustic_context(context)
+
+    def _store_acoustic(self, result: dict[str, Any]) -> None:
+        if "voice_state" in result and "signals" in result:
+            self.acoustic_result = _extract_acoustic_fields(result)
+
+
+def _additive_response_fields(
+    result: dict[str, Any], acoustic: dict[str, Any], updated_at: datetime
+) -> dict[str, Any]:
+    fields = _extract_acoustic_fields(acoustic)
+    voice_state = dict(fields.get("voice_state", {}))
+    if voice_state.get("updated_at") is None:
+        voice_state["updated_at"] = _iso_z(updated_at)
+    fields["voice_state"] = voice_state
+    for key in _MODEL_DEBUG_KEYS:
+        if key in result:
+            fields[key] = result[key]
+    if "capabilities" not in fields:
+        fields["capabilities"] = _default_capabilities()
+    return fields
+
+
+def _extract_acoustic_fields(source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "voice_state": dict(source.get("voice_state", {})),
+        "signals": dict(source.get("signals", {})),
+        "signal_events": list(source.get("signal_events", [])),
+        "score_drivers": dict(source.get("score_drivers", {})),
+        "debug_features": dict(source.get("debug_features", {})),
+    }
+
+
+_MODEL_DEBUG_KEYS = (
+    "emotion_source",
+    "raw_emotion",
+    "raw_ser_label",
+    "sensevoice_emotion",
+    "sensevoice_emotion_confidence",
+    "sensevoice_raw_emotion",
+    "ser",
+    "capabilities",
+)
+
+
+def _default_capabilities() -> dict[str, Any]:
+    return {
+        "emotion_labels_supported": config.SER_ENABLED,
+        "emotion_probabilities_calibrated": False,
+        "event_labels_supported": True,
+        "transcript_supported": True,
+        "voice_state_supported": True,
+        "score_drivers_supported": True,
+        "ser_license_caveat": config.SER_LICENSE_CAVEAT if config.SER_ENABLED else None,
+    }
 
 
 class SessionManager:

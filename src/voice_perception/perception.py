@@ -1,12 +1,14 @@
-"""SenseVoice-Small ONNX wrapper for paralinguistic perception."""
+"""SenseVoice, Emotion2Vec+, and acoustic perception pipeline."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -23,6 +25,8 @@ from voice_perception.audio import (
     load_wav_16khz_mono,
     to_float32_mono,
 )
+from voice_perception.emotion import Emotion2VecClassifier
+from voice_perception.signals import analyze_acoustic_context
 
 logger = logging.getLogger(__name__)
 
@@ -54,16 +58,27 @@ class VoicePerception:
         self._input_mode: str | None = None
         start = time.perf_counter()
         self.model = self._load_model()
+        self.ser = Emotion2VecClassifier(preload=config.SER_PRELOAD)
         self.load_ms = int((time.perf_counter() - start) * 1000)
-        logger.info("event=model_loaded model_dir=%s load_ms=%d", self.model_dir, self.load_ms)
+        logger.info(
+            "event=model_loaded model_dir=%s ser_enabled=%s load_ms=%d",
+            self.model_dir,
+            self.ser.enabled,
+            self.load_ms,
+        )
 
     def analyze(self, pcm_16khz_mono: np.ndarray) -> dict[str, Any]:
         pcm = to_float32_mono(pcm_16khz_mono)
         activity = analyze_speech_activity(pcm)
+        acoustic = analyze_acoustic_context(pcm)
         if pcm.size < config.MIN_INFERENCE_SAMPLES:
-            return self._empty_result(activity.silence_ratio)
+            return _attach_additive_fields(
+                self._empty_result(activity.silence_ratio), acoustic, _ser_not_called("min_context")
+            )
         if not activity.has_speech:
-            return self._no_speech_result(activity)
+            return _attach_additive_fields(
+                self._no_speech_result(activity), acoustic, _ser_not_called("no_speech")
+            )
         start = time.perf_counter()
         with self._lock:
             raw_output = self._infer(pcm)
@@ -72,7 +87,14 @@ class VoicePerception:
         parsed["silence_ratio"] = activity.silence_ratio
         parsed["inference_ms"] = inference_ms
         parsed["no_speech"] = False
-        return parsed
+        ser_result = self._analyze_ser(pcm, activity)
+        return _attach_additive_fields(parsed, acoustic, ser_result)
+
+    def _analyze_ser(self, pcm: np.ndarray, activity: SpeechActivity) -> dict[str, Any]:
+        ser = getattr(self, "ser", None)
+        if ser is None:
+            return _ser_not_called("not_configured")
+        return ser.analyze(pcm, activity)
 
     def _load_model(self) -> Any:
         try:
@@ -188,6 +210,79 @@ class VoicePerception:
         }
 
 
+def _attach_additive_fields(
+    result: dict[str, Any], acoustic: dict[str, Any], ser_result: dict[str, Any]
+) -> dict[str, Any]:
+    output = dict(result)
+    _preserve_sensevoice_emotion(output)
+    _apply_ser_emotion(output, ser_result)
+    output.update(acoustic)
+    output["ser"] = ser_result
+    output["raw_ser_label"] = ser_result.get("raw_label")
+    output["capabilities"] = _capabilities(bool(ser_result.get("enabled")))
+    _merge_emotion_driver(output)
+    return output
+
+
+def _preserve_sensevoice_emotion(output: dict[str, Any]) -> None:
+    output["sensevoice_emotion"] = output.get("emotion", "NEUTRAL")
+    output["sensevoice_emotion_confidence"] = float(output.get("emotion_confidence", 0.0))
+    output["sensevoice_raw_emotion"] = output.get("raw_emotion")
+
+
+def _apply_ser_emotion(output: dict[str, Any], ser_result: dict[str, Any]) -> None:
+    output["emotion_source"] = "sensevoice"
+    if not ser_result.get("enabled"):
+        return
+    if ser_result.get("skipped") or ser_result.get("error"):
+        output["emotion"] = "NEUTRAL"
+        output["emotion_confidence"] = 0.0
+        output["emotion_source"] = "none"
+        return
+    output["emotion"] = ser_result.get("label", "NEUTRAL")
+    output["emotion_confidence"] = float(ser_result.get("confidence", 0.0))
+    output["emotion_source"] = "emotion2vec"
+
+
+def _merge_emotion_driver(output: dict[str, Any]) -> None:
+    drivers = output.get("score_drivers")
+    if not isinstance(drivers, dict):
+        return
+    emotion = str(output.get("emotion", "NEUTRAL")).upper()
+    confidence = float(output.get("emotion_confidence", 0.0))
+    drivers["emotion_token"] = config.EMOTION_STRESS.get(emotion, 0.0) * confidence
+
+
+def _ser_not_called(reason: str) -> dict[str, Any]:
+    return {
+        "enabled": config.SER_ENABLED,
+        "skipped": True,
+        "reason": reason,
+        "label": "NEUTRAL",
+        "confidence": 0.0,
+        "raw_label": None,
+        "raw_confidence": None,
+        "scores": {},
+        "model": config.SER_MODEL_DIR,
+        "latency_ms": 0,
+        "window_seconds": 0.0,
+        "experimental": True,
+        "license_caveat": config.SER_LICENSE_CAVEAT,
+    }
+
+
+def _capabilities(ser_enabled: bool) -> dict[str, Any]:
+    return {
+        "emotion_labels_supported": ser_enabled,
+        "emotion_probabilities_calibrated": False,
+        "event_labels_supported": True,
+        "transcript_supported": True,
+        "voice_state_supported": True,
+        "score_drivers_supported": True,
+        "ser_license_caveat": config.SER_LICENSE_CAVEAT if ser_enabled else None,
+    }
+
+
 def parse_sensevoice_output(raw_output: Any) -> dict[str, Any]:
     record = _first_record(raw_output)
     raw_text, direct_confidence = _extract_text_and_confidence(record)
@@ -287,8 +382,9 @@ def main() -> None:
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     pcm = load_wav_16khz_mono(args.wav_file)
-    perception = VoicePerception()
-    result = perception.analyze(pcm)
+    with contextlib.redirect_stdout(sys.stderr):
+        perception = VoicePerception()
+        result = perception.analyze(pcm)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

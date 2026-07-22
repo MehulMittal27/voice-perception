@@ -65,6 +65,10 @@ class OneShotEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["events"], ["Breath"])
         self.assertGreater(payload["hesitation_score"], 0.5)
         self.assertEqual(payload["audio_samples"], config.SAMPLE_RATE)
+        self.assertEqual(payload["classification_mode"], "one_shot")
+        self.assertIn("voice_state", payload)
+        self.assertIn("signals", payload)
+        self.assertIn("capabilities", payload)
 
     async def test_classify_endpoint_rejects_empty_upload(self) -> None:
         status, _ = await _post_multipart_file(b"", "empty.webm", "audio/webm;codecs=opus")
@@ -96,6 +100,8 @@ class OneShotEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["events"], [])
         self.assertNotEqual(payload["transcript"], "I.")
         self.assertEqual(payload["hesitation_score"], 0.0)
+        self.assertEqual(payload["voice_state"]["label"], "no_speech")
+        self.assertEqual(payload["signals"]["stress"], 0.0)
 
     async def test_one_shot_processing_uses_uploaded_audio_once(self) -> None:
         main.decode_chunk = _fake_decode(config.SAMPLE_RATE * 2)

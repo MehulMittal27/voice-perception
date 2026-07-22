@@ -18,6 +18,7 @@ from voice_perception.audio import decode_chunk
 from voice_perception.fusion import compute_hesitation_score
 from voice_perception.perception import VoicePerception
 from voice_perception.session import SessionManager
+from voice_perception.signals import analyze_acoustic_context
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,7 +99,14 @@ async def classify_audio(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
-    return {"status": "ok", "model_loaded": hasattr(app.state, "perception")}
+    perception = getattr(app.state, "perception", None)
+    ser = getattr(perception, "ser", None)
+    return {
+        "status": "ok",
+        "model_loaded": perception is not None,
+        "ser_enabled": config.SER_ENABLED,
+        "ser_loaded": bool(getattr(ser, "loaded", False)),
+    }
 
 
 async def _classify_audio_bytes(raw_bytes: bytes, content_type: str = "unknown") -> dict[str, Any]:
@@ -107,8 +115,9 @@ async def _classify_audio_bytes(raw_bytes: bytes, content_type: str = "unknown")
     if pcm.size == 0:
         raise HTTPException(status_code=422, detail="audio upload could not be decoded")
     result = await asyncio.to_thread(app.state.perception.analyze, pcm)
+    acoustic = result if "signals" in result else analyze_acoustic_context(pcm)
     latency_ms = int((time.perf_counter() - started) * 1000)
-    response = _one_shot_response(result, latency_ms, int(pcm.size))
+    response = _one_shot_response(result, latency_ms, int(pcm.size), acoustic)
     logger.info(
         "event=one_shot_classified content_type=%s bytes=%d samples=%d "
         "latency_ms=%d inference_ms=%d emotion=%s hesitation=%.3f",
@@ -124,10 +133,13 @@ async def _classify_audio_bytes(raw_bytes: bytes, content_type: str = "unknown")
 
 
 def _one_shot_response(
-    result: dict[str, Any], latency_ms: int, audio_samples: int
+    result: dict[str, Any],
+    latency_ms: int,
+    audio_samples: int,
+    acoustic: dict[str, Any],
 ) -> dict[str, Any]:
     transcript = str(result.get("transcript", ""))
-    return {
+    response = {
         "transcript": transcript,
         "transcript_partial": transcript,
         "emotion": result.get("emotion", "NEUTRAL"),
@@ -139,6 +151,57 @@ def _one_shot_response(
         "inference_ms": int(result.get("inference_ms", 0)),
         "latency_ms": latency_ms,
         "audio_samples": audio_samples,
+        "classification_mode": "one_shot",
+    }
+    response.update(_additive_one_shot_fields(result, acoustic))
+    return response
+
+
+def _additive_one_shot_fields(result: dict[str, Any], acoustic: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        "voice_state": dict(acoustic.get("voice_state", {})),
+        "signals": dict(acoustic.get("signals", {})),
+        "signal_events": list(acoustic.get("signal_events", [])),
+        "score_drivers": dict(acoustic.get("score_drivers", {})),
+        "debug_features": dict(acoustic.get("debug_features", {})),
+    }
+    for key in _MODEL_DEBUG_KEYS:
+        if key in result:
+            fields[key] = result[key]
+    if "capabilities" not in fields:
+        fields["capabilities"] = _default_capabilities()
+    return fields
+
+
+def _ack_signal_fields(state_response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "voice_state": state_response.get("voice_state"),
+        "signals": state_response.get("signals"),
+        "signal_events": state_response.get("signal_events", []),
+    }
+
+
+_MODEL_DEBUG_KEYS = (
+    "emotion_source",
+    "raw_emotion",
+    "raw_ser_label",
+    "sensevoice_emotion",
+    "sensevoice_emotion_confidence",
+    "sensevoice_raw_emotion",
+    "ser",
+    "capabilities",
+)
+
+
+def _default_capabilities() -> dict[str, Any]:
+    return {
+        "emotion_labels_supported": config.SER_ENABLED,
+        "emotion_probabilities_calibrated": False,
+        "event_labels_supported": True,
+        "transcript_supported": True,
+        "voice_state_supported": True,
+        "score_drivers_supported": True,
+        "ser_license_caveat": config.SER_LICENSE_CAVEAT if config.SER_ENABLED else None,
     }
 
 
@@ -162,14 +225,14 @@ async def _process_audio_bytes(websocket: WebSocket, session_id: str, raw_bytes:
     pcm = state.decoder.decode(raw_bytes)
     window = state.ingest_audio(pcm)
     if window is None or window.size < config.MIN_INFERENCE_SAMPLES:
-        await _send_ack(websocket, started, buffered=True)
+        await _send_ack(websocket, started, buffered=True, state=state)
         return
     result = await asyncio.to_thread(app.state.perception.analyze, window)
     if result.get("no_speech"):
-        manager.mark_no_speech(session_id, result)
-        await _send_ack(websocket, started, buffered=False, no_speech=True)
+        updated_state = manager.mark_no_speech(session_id, result)
+        await _send_ack(websocket, started, buffered=False, no_speech=True, state=updated_state)
         return
-    manager.update(session_id, result)
+    updated_state = manager.update(session_id, result)
     latency_ms = int((time.perf_counter() - started) * 1000)
     logger.info(
         "event=chunk_processed session_id=%s bytes=%d chunk_samples=%d "
@@ -185,21 +248,29 @@ async def _process_audio_bytes(websocket: WebSocket, session_id: str, raw_bytes:
         result.get("emotion", "NEUTRAL"),
         state.hesitation_score,
     )
-    await websocket.send_json({"chunk_processed": True, "latency_ms": latency_ms})
+    await _send_ack(websocket, started, buffered=False, state=updated_state)
 
 
 async def _send_ack(
-    websocket: WebSocket, started: float, buffered: bool, no_speech: bool = False
+    websocket: WebSocket,
+    started: float,
+    buffered: bool,
+    no_speech: bool = False,
+    state: Any | None = None,
 ) -> None:
     latency_ms = int((time.perf_counter() - started) * 1000)
-    await websocket.send_json(
-        {
-            "chunk_processed": True,
-            "latency_ms": latency_ms,
-            "buffered": buffered,
-            "no_speech": no_speech,
-        }
-    )
+    message: dict[str, Any] = {
+        "chunk_processed": True,
+        "latency_ms": latency_ms,
+        "buffered": buffered,
+        "no_speech": no_speech,
+    }
+    if state is not None:
+        signal_fields = _ack_signal_fields(state.to_response())
+        message.update(signal_fields)
+        signals = signal_fields.get("signals") or {}
+        message["no_speech"] = no_speech or bool(signals.get("no_speech", False))
+    await websocket.send_json(message)
 
 
 async def _cancel_task(task: asyncio.Task[Any]) -> None:
