@@ -1,3 +1,5 @@
+# Compatibility install file. The authoritative runtime dependency list is
+# [project].dependencies in pyproject.toml, and tests enforce this file stays aligned.
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 funasr-onnx==0.4.1

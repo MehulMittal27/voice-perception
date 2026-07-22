@@ -304,7 +304,7 @@
     <div class="section-heading">
       <div>
         <h2>Live streaming mode</h2>
-        <p>Continuous WebSocket microphone ingestion. Acoustic signals update quickly; transcript and model labels wait for rolling context.</p>
+        <p>Continuous WebSocket microphone ingestion. Acoustic signals update quickly; transcript and model labels wait for rolling context. Select German before speaking German so faster-whisper handles the transcript.</p>
       </div>
       <div class="live-controls">
         <label class="language-control" for="languageSelect">
@@ -593,10 +593,19 @@
       updateSignalUi(state);
       const signals = state.signals || {};
       const noSpeech = Boolean(state.no_speech || signals.no_speech);
-      transcriptEl.textContent = noSpeech ? 'No speech detected' : (state.transcript_partial || 'Listening...');
+      const transcriptWarning = transcriptStatusMessage(state);
+      transcriptEl.textContent = noSpeech ? 'No speech detected' : (state.transcript_partial || transcriptWarning || 'Listening...');
       renderTags(eventsEl, state.events || []);
       renderTags(signalEventsEl, (state.signal_events || []).map(event => `${event.type} ${Number(event.confidence || 0).toFixed(2)}`));
       updateEmotionUi(state);
+    }
+
+    function transcriptStatusMessage(payload) {
+      if (!payload || !payload.transcript_skipped) return '';
+      const reason = payload.transcript_error || payload.transcript_skip_reason;
+      if (!reason) return '';
+      const backend = payload.transcript_backend || payload.transcript_source || 'transcript';
+      return `Transcript unavailable (${backend}): ${String(reason).replace(/_/g, ' ')}`;
     }
 
     function updateSignalUi(state) {
@@ -733,7 +742,8 @@
       oneShotRawJson.textContent = JSON.stringify(payload, null, 2);
       const signals = payload.signals || {};
       const noSpeech = Boolean(payload.no_speech || signals.no_speech);
-      oneShotTranscript.textContent = noSpeech ? 'No speech detected' : (payload.transcript || payload.transcript_partial || '(empty)');
+      const transcriptWarning = transcriptStatusMessage(payload);
+      oneShotTranscript.textContent = noSpeech ? 'No speech detected' : (payload.transcript || payload.transcript_partial || transcriptWarning || '(empty)');
       oneShotVoiceState.textContent = noSpeech ? 'No speech detected' : 'Speech detected';
       oneShotSpeechActivity.textContent = Number(signals.speech_activity || 0).toFixed(2);
       oneShotStress.textContent = Number(signals.stress || 0).toFixed(2);
