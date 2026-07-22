@@ -30,10 +30,12 @@ class FakeDecoder:
 class FakePerception:
     def __init__(self, no_speech: bool = False) -> None:
         self.window_sizes: list[int] = []
+        self.languages: list[str] = []
         self.no_speech = no_speech
 
-    def analyze(self, pcm: np.ndarray) -> dict[str, Any]:
+    def analyze(self, pcm: np.ndarray, language: str | None = None) -> dict[str, Any]:
         self.window_sizes.append(int(pcm.size))
+        self.languages.append(language or "auto")
         if self.no_speech:
             return _no_speech_result()
         return {
@@ -84,8 +86,19 @@ class LiveBufferingTests(unittest.TestCase):
 
 
 class MainChunkPathTests(unittest.IsolatedAsyncioTestCase):
+    async def test_start_session_accepts_language_selection(self) -> None:
+        payload = await main.start_session({"language": "de"})
+        session_id = payload["session_id"]
+        state = main.manager.get(session_id)
+        try:
+            self.assertIsNotNone(state)
+            assert state is not None
+            self.assertEqual(state.language, "de")
+        finally:
+            main.manager.end(session_id)
+
     async def test_websocket_processing_analyzes_rolling_window(self) -> None:
-        session_id = main.manager.create_session()
+        session_id = main.manager.create_session(language="de")
         state = main.manager.get(session_id)
         assert state is not None
         chunks = [np.ones(config.SAMPLE_RATE, dtype=np.float32) for _ in range(3)]
@@ -105,6 +118,7 @@ class MainChunkPathTests(unittest.IsolatedAsyncioTestCase):
             fake_perception.window_sizes,
             [config.SAMPLE_RATE * 2, config.SAMPLE_RATE * 3],
         )
+        self.assertEqual(fake_perception.languages, ["de", "de"])
         self.assertTrue(websocket.messages[0].get("buffered"))
         self.assertEqual(websocket.messages[-1].get("chunk_processed"), True)
 

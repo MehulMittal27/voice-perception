@@ -38,6 +38,22 @@ SENSEVOICE_DEVICE_ID = os.getenv("SENSEVOICE_DEVICE_ID", "-1")
 SENSEVOICE_THREADS = int(os.getenv("SENSEVOICE_THREADS", "4"))
 SENSEVOICE_LANGUAGE = os.getenv("SENSEVOICE_LANGUAGE", "auto").strip().lower() or "auto"
 
+GERMAN_ASR_ENABLED = os.getenv("GERMAN_ASR_ENABLED", "true").lower() not in {"0", "false", "no"}
+GERMAN_ASR_MODEL = os.getenv("GERMAN_ASR_MODEL", "Systran/faster-whisper-base")
+GERMAN_ASR_COMPUTE_TYPE = os.getenv("GERMAN_ASR_COMPUTE_TYPE", "int8")
+GERMAN_ASR_THREADS = int(os.getenv("GERMAN_ASR_THREADS", "4"))
+GERMAN_ASR_PRELOAD = os.getenv("GERMAN_ASR_PRELOAD", "false").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+GERMAN_ASR_MIN_CONTEXT_SECONDS = float(os.getenv("GERMAN_ASR_MIN_CONTEXT_SECONDS", "2.0"))
+GERMAN_ASR_MIN_CONTEXT_SAMPLES = max(
+    MIN_INFERENCE_SAMPLES,
+    int(SAMPLE_RATE * GERMAN_ASR_MIN_CONTEXT_SECONDS),
+)
+GERMAN_ASR_BEAM_SIZE = int(os.getenv("GERMAN_ASR_BEAM_SIZE", "1"))
+
 SER_ENABLED = os.getenv("SER_ENABLED", "true").lower() not in {"0", "false", "no"}
 SER_MODEL_DIR = os.getenv("SER_MODEL_DIR", "iic/emotion2vec_plus_base")
 SER_CACHE_DIR = os.getenv("SER_CACHE_DIR", ".cache/modelscope")
