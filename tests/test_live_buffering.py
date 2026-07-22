@@ -28,11 +28,14 @@ class FakeDecoder:
 
 
 class FakePerception:
-    def __init__(self) -> None:
+    def __init__(self, no_speech: bool = False) -> None:
         self.window_sizes: list[int] = []
+        self.no_speech = no_speech
 
     def analyze(self, pcm: np.ndarray) -> dict[str, Any]:
         self.window_sizes.append(int(pcm.size))
+        if self.no_speech:
+            return _no_speech_result()
         return {
             "transcript": f"rolling window {pcm.size}",
             "emotion": "NEUTRAL",
@@ -40,6 +43,7 @@ class FakePerception:
             "events": ["Speech"],
             "silence_ratio": 0.0,
             "inference_ms": 0,
+            "no_speech": False,
         }
 
 
@@ -104,6 +108,29 @@ class MainChunkPathTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(websocket.messages[0].get("buffered"))
         self.assertEqual(websocket.messages[-1].get("chunk_processed"), True)
 
+    async def test_websocket_no_speech_result_clears_live_state(self) -> None:
+        session_id = main.manager.create_session()
+        state = main.manager.get(session_id)
+        assert state is not None
+        chunks = [np.zeros(config.SAMPLE_RATE, dtype=np.float32) for _ in range(2)]
+        state.decoder = FakeDecoder(chunks)  # type: ignore[assignment]
+        main.app.state.perception = FakePerception(no_speech=True)
+        websocket = FakeWebSocket()
+
+        try:
+            await main._process_audio_bytes(websocket, session_id, b"one")
+            await main._process_audio_bytes(websocket, session_id, b"two")
+            response = state.to_response()
+        finally:
+            main.manager.end(session_id)
+
+        self.assertTrue(response["no_speech"])
+        self.assertEqual(response["transcript_partial"], "")
+        self.assertEqual(response["events"], [])
+        self.assertEqual(response["hesitation_score"], 0.0)
+        self.assertEqual(response["chunks_processed"], 0)
+        self.assertTrue(websocket.messages[-1].get("no_speech"))
+
 
 def _result(transcript: str) -> dict[str, Any]:
     return {
@@ -113,6 +140,19 @@ def _result(transcript: str) -> dict[str, Any]:
         "events": ["Speech"],
         "silence_ratio": 0.0,
         "inference_ms": 0,
+        "no_speech": False,
+    }
+
+
+def _no_speech_result() -> dict[str, Any]:
+    return {
+        "transcript": "",
+        "emotion": "NEUTRAL",
+        "emotion_confidence": 0.0,
+        "events": [],
+        "silence_ratio": 1.0,
+        "inference_ms": 0,
+        "no_speech": True,
     }
 
 

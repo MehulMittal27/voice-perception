@@ -1,4 +1,4 @@
-# AGENTS.md — Voice Perception Service
+# AGENTS.md - Voice Perception Service
 
 ## What this is
 A standalone microservice that listens to live audio and emits a real-time
@@ -13,15 +13,15 @@ This service does NOT know about ElevenLabs or Claude. It only exposes:
 - HTTP state retrieval
 
 ## Design principles
-1. **Single responsibility** — perception only. No dialogue, no TTS, no LLM.
-2. **Language-agnostic** — must work on any spoken language input, since the
+1. **Single responsibility** - perception only. No dialogue, no TTS, no LLM.
+2. **Language-agnostic** - must work on any spoken language input, since the
    downstream use case is multilingual (Ukrainian, Arabic, German, English).
    SenseVoice ASR only covers 5 languages, but emotion/event detection is
    paralinguistic and works cross-lingually. We rely on the paralinguistic
    signals, not the transcript.
-3. **Testable in isolation** — must be runnable and demonstrable without any
+3. **Testable in isolation** - must be runnable and demonstrable without any
    other service. Ship a browser test page that shows live state.
-4. **Fast enough on a laptop CPU** — target <400ms inference per 1s audio
+4. **Fast enough on a laptop CPU** - target <400ms inference per 1s audio
    chunk on a modern laptop with quantized ONNX. If it doesn't hit this on
    the target machine, we fall back to a cloud GPU endpoint.
 
@@ -62,7 +62,7 @@ voice-perception/
     └── test_fusion.py        # unit tests for scoring logic
 ```
 
-## API contract (this is the integration surface — do not change without updating consumers)
+## API contract (this is the integration surface - do not change without updating consumers)
 
 ### POST /session/start
 Request: `{}` (empty)
@@ -91,13 +91,20 @@ Response:
 
 If no state yet: return defaults (emotion NEUTRAL, hesitation 0.0, empty events).
 
+### POST /classify
+Additive one-shot test endpoint. Accepts multipart form data with `file` as a
+MediaRecorder-compatible audio blob. Response includes transcript,
+`transcript_partial`, emotion, `emotion_confidence`, events, `hesitation_score`,
+`silence_ratio`, `no_speech`, `inference_ms`, `latency_ms`, and `audio_samples`.
+Live state may also include additive `no_speech`.
+
 ### POST /session/{session_id}/end
 Cleans up the session. Response: `{ "ok": true }`
 
 ### GET /health
 Response: `{ "status": "ok", "model_loaded": true }`
 
-## Hesitation score fusion (this is the "secret sauce" — get it right)
+## Hesitation score fusion (this is the "secret sauce" - get it right)
 
 Inputs per chunk:
 - SenseVoice emotion label + confidence
@@ -164,11 +171,14 @@ Keep the weights in config.py so they can be tuned during the demo.
    context before the first inference. Do not revert to per-slice SenseVoice
    calls; short chunks can cause auto-language flips and garbage transcripts.
    For English-only demos, set `SENSEVOICE_LANGUAGE=en`.
+7. Both live and one-shot paths use the configurable no-speech guard in
+   `perception.py` before SenseVoice inference to avoid hallucinated transcript
+   or `Speech` events on silence.
 
 ## Testing rules
 - Every component must be runnable in isolation. `python -m voice_perception.perception` should be able to run inference on a bundled test WAV.
 - The browser UI at `/` must work end-to-end without any code changes: click, speak, see state updating.
-- Provide two test WAVs in `tests/fixtures/` — one calm, one anxious — and a script that runs both through the pipeline and asserts different hesitation scores.
+- Provide two test WAVs in `tests/fixtures/` - one calm, one anxious - and a script that runs both through the pipeline and asserts different hesitation scores.
 
 ## Non-goals (do not build these)
 - User accounts, auth, or persistence

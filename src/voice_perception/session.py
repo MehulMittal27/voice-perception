@@ -80,6 +80,14 @@ class SessionState:
         self.last_accessed_at = self.updated_at
         self._replace_transcript(str(result.get("transcript", "")))
 
+    def mark_no_speech(self, result: dict[str, Any]) -> None:
+        self.perception_result = dict(result)
+        self.scorer = HesitationScorer()
+        self.hesitation_score = 0.0
+        self.updated_at = utc_now()
+        self.last_accessed_at = self.updated_at
+        self._replace_transcript("")
+
     def to_response(self) -> dict[str, Any]:
         self.last_accessed_at = utc_now()
         result = self.perception_result or _default_perception_result()
@@ -92,6 +100,7 @@ class SessionState:
             "events": list(result.get("events", [])),
             "hesitation_score": self.hesitation_score,
             "chunks_processed": self.chunks_processed,
+            "no_speech": bool(result.get("no_speech", False)),
         }
 
     @property
@@ -146,6 +155,13 @@ class SessionManager:
         )
         return state
 
+    def mark_no_speech(self, session_id: str, result: dict[str, Any]) -> SessionState:
+        with self._lock:
+            state = self.sessions[session_id]
+            state.mark_no_speech(result)
+        logger.info("event=session_no_speech session_id=%s", session_id)
+        return state
+
     def end(self, session_id: str) -> bool:
         with self._lock:
             removed = self.sessions.pop(session_id, None) is not None
@@ -182,6 +198,7 @@ def _default_perception_result() -> dict[str, Any]:
         "events": [],
         "silence_ratio": 0.0,
         "inference_ms": 0,
+        "no_speech": True,
     }
 
 
