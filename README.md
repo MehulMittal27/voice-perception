@@ -14,14 +14,13 @@ Use the bundled browser page to test calm vs anxious speech without any other se
 ## Setup
 
 ```bash
-uv venv --python 3.11
-source .venv/bin/activate
-uv pip install -r requirements.txt
-uv pip install -e .
+uv sync
 uv run uvicorn voice_perception.main:app --reload
 ```
 
-Open http://localhost:8000, choose a transcript language, and click Start for live mode. First startup can take several minutes while SenseVoice and Emotion2Vec+ download and load. The default German ASR model is lazy-loaded on the first German transcript request unless `GERMAN_ASR_PRELOAD=true`.
+Open http://localhost:8000, choose a transcript language, and click Start for live mode. Select German before speaking German so faster-whisper is used for the product transcript. First startup can take several minutes while SenseVoice and Emotion2Vec+ download and load. The default German ASR model is lazy-loaded on the first German transcript request unless `GERMAN_ASR_PRELOAD=true`.
+
+`uv sync` installs the runtime dependencies from `pyproject.toml` and `uv.lock`, including faster-whisper and CTranslate2 for German ASR. `requirements.txt` is retained as a compatibility install file and must stay aligned with `pyproject.toml`.
 
 Emotion2Vec+ base (`iic/emotion2vec_plus_base`) is enabled by default as the primary exact-emotion classifier for the hackathon demo. Treat it as demo use until its license is verified for broader shipping. Acoustic features are supporting guardrails and numeric metrics, not categorical emotion labels. To run only the acoustic plus transcript lanes, set `SER_ENABLED=false`.
 
@@ -88,4 +87,5 @@ If startup tries to export ONNX, make sure `SENSEVOICE_MODEL_DIR` is `iic/SenseV
 If Emotion2Vec+ download or memory use blocks local testing, set `SER_ENABLED=false` to keep SenseVoice transcript/events and the acoustic lane running, or set `SER_MODEL_DIR` to a pre-downloaded `iic/emotion2vec_plus_base` cache.
 If PyAV cannot decode browser chunks, try Chrome or Firefox with `audio/webm;codecs=opus`.
 If German transcript model download or CPU use blocks local testing, set `GERMAN_ASR_ENABLED=false` or choose Auto/English to keep SenseVoice transcript/events and acoustic signals running.
+If German transcript is blank, check `transcript_error` or `transcript_skip_reason` in the raw JSON and run `uv sync` to ensure faster-whisper and CTranslate2 are installed.
 If short English phrases appear as other languages during a demo, choose English in the UI, set `SENSEVOICE_LANGUAGE=en`, and keep the default rolling live context enabled.

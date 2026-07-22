@@ -16,7 +16,6 @@ __pycache__/
 # Local configuration
 .env
 .env.*
-uv.lock
 
 # Model caches and local model exports
 .cache/

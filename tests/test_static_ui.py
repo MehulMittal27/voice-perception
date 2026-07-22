@@ -24,6 +24,15 @@ class StaticUiCopyTests(unittest.TestCase):
         self.assertIn('<option value="en">English</option>', html)
         self.assertIn('<option value="de">German</option>', html)
         self.assertIn("formData.append('language', selectedLanguage())", html)
+        self.assertIn("Select German before speaking German", html)
+
+    def test_ui_surfaces_transcript_backend_errors(self) -> None:
+        html = (ROOT / "static/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("function transcriptStatusMessage", html)
+        self.assertIn("transcript_error", html)
+        self.assertIn("transcript_skip_reason", html)
+        self.assertIn("Transcript unavailable", html)
 
 
 if __name__ == "__main__":
