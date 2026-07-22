@@ -1,0 +1,50 @@
+"""Runtime configuration for the Voice Perception Service."""
+
+from __future__ import annotations
+
+import os
+
+SAMPLE_RATE = 16_000
+CHANNELS = 1
+CHUNK_SECONDS = 1.0
+MIN_INFERENCE_SECONDS = 0.2
+MIN_INFERENCE_SAMPLES = int(SAMPLE_RATE * MIN_INFERENCE_SECONDS)
+
+SENSEVOICE_MODEL_DIR = os.getenv("SENSEVOICE_MODEL_DIR", "iic/SenseVoiceSmall-onnx")
+SENSEVOICE_CACHE_DIR = os.getenv("SENSEVOICE_CACHE_DIR", ".cache/modelscope")
+SENSEVOICE_QUANTIZE = os.getenv("SENSEVOICE_QUANTIZE", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+SENSEVOICE_DEVICE_ID = os.getenv("SENSEVOICE_DEVICE_ID", "-1")
+SENSEVOICE_THREADS = int(os.getenv("SENSEVOICE_THREADS", "4"))
+
+EMOTION_STRESS = {
+    "FEARFUL": 0.9,
+    "SAD": 0.6,
+    "ANGRY": 0.5,
+    "DISGUSTED": 0.4,
+    "SURPRISED": 0.3,
+    "NEUTRAL": 0.1,
+    "HAPPY": 0.0,
+}
+EVENT_STRESS = {
+    "Breath": 0.3,
+    "Cough": 0.4,
+    "Cry": 0.5,
+}
+EVENT_STRESS_MAX = 0.8
+SILENCE_STRESS_MULTIPLIER = 0.5
+HESITATION_EMOTION_WEIGHT = 0.5
+HESITATION_EVENT_WEIGHT = 0.3
+HESITATION_SILENCE_WEIGHT = 0.2
+HESITATION_EMA_ALPHA = 0.4
+
+SILENCE_RMS_THRESHOLD = float(os.getenv("SILENCE_RMS_THRESHOLD", "0.01"))
+SILENCE_FRAME_MS = int(os.getenv("SILENCE_FRAME_MS", "20"))
+
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "600"))
+SESSION_SWEEP_SECONDS = int(os.getenv("SESSION_SWEEP_SECONDS", "30"))
+TRANSCRIPT_MAX_CHARS = int(os.getenv("TRANSCRIPT_MAX_CHARS", "2000"))
+MAX_AUDIO_BUFFER_BYTES = int(os.getenv("MAX_AUDIO_BUFFER_BYTES", str(50 * 1024 * 1024)))

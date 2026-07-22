@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+funasr-onnx==0.4.1
+av==13.0.0
+numpy==1.26.4
+soundfile==0.12.1
+python-multipart==0.0.9
+websockets==13.0
+# Runtime dependencies imported by funasr-onnx or needed for ModelScope download.
+jieba==0.42.1
+torch==2.2.2
+modelscope==1.37.1
