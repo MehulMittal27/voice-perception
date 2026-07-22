@@ -158,8 +158,10 @@ def _one_shot_response(
 
 
 def _additive_one_shot_fields(result: dict[str, Any], acoustic: dict[str, Any]) -> dict[str, Any]:
+    voice_state = dict(acoustic.get("voice_state", {}))
     fields = {
-        "voice_state": dict(acoustic.get("voice_state", {})),
+        "voice_state": voice_state,
+        "acoustic_debug": {"voice_state": voice_state},
         "signals": dict(acoustic.get("signals", {})),
         "signal_events": list(acoustic.get("signal_events", [])),
         "score_drivers": dict(acoustic.get("score_drivers", {})),
@@ -176,6 +178,7 @@ def _additive_one_shot_fields(result: dict[str, Any], acoustic: dict[str, Any]) 
 def _ack_signal_fields(state_response: dict[str, Any]) -> dict[str, Any]:
     return {
         "voice_state": state_response.get("voice_state"),
+        "acoustic_debug": state_response.get("acoustic_debug"),
         "signals": state_response.get("signals"),
         "signal_events": state_response.get("signal_events", []),
     }
@@ -200,6 +203,8 @@ def _default_capabilities() -> dict[str, Any]:
         "event_labels_supported": True,
         "transcript_supported": True,
         "voice_state_supported": True,
+        "voice_state_debug_only": True,
+        "acoustic_emotion_labels_supported": False,
         "score_drivers_supported": True,
         "ser_license_caveat": config.SER_LICENSE_CAVEAT if config.SER_ENABLED else None,
     }

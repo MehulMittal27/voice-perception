@@ -217,6 +217,7 @@ def _attach_additive_fields(
     _preserve_sensevoice_emotion(output)
     _apply_ser_emotion(output, ser_result)
     output.update(acoustic)
+    output["acoustic_debug"] = {"voice_state": dict(acoustic.get("voice_state", {}))}
     output["ser"] = ser_result
     output["raw_ser_label"] = ser_result.get("raw_label")
     output["capabilities"] = _capabilities(bool(ser_result.get("enabled")))
@@ -278,6 +279,8 @@ def _capabilities(ser_enabled: bool) -> dict[str, Any]:
         "event_labels_supported": True,
         "transcript_supported": True,
         "voice_state_supported": True,
+        "voice_state_debug_only": True,
+        "acoustic_emotion_labels_supported": False,
         "score_drivers_supported": True,
         "ser_license_caveat": config.SER_LICENSE_CAVEAT if ser_enabled else None,
     }
