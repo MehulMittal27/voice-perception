@@ -1,0 +1,148 @@
+"""FastAPI app for the Voice Perception Service."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, AsyncIterator
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from voice_perception import config
+from voice_perception.perception import VoicePerception
+from voice_perception.session import SessionManager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger(__name__)
+manager = SessionManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    start = time.perf_counter()
+    logger.info("event=startup_model_load model_dir=%s", config.SENSEVOICE_MODEL_DIR)
+    app.state.perception = VoicePerception()
+    load_ms = int((time.perf_counter() - start) * 1000)
+    app.state.expiry_task = asyncio.create_task(manager.expire_sessions_loop())
+    logger.info("event=startup_ready model_loaded=true model_load_ms=%d", load_ms)
+    try:
+        yield
+    finally:
+        app.state.expiry_task.cancel()
+        await _cancel_task(app.state.expiry_task)
+        logger.info("event=shutdown_complete")
+
+
+app = FastAPI(title="Voice Perception Service", version="0.1.0", lifespan=lifespan)
+
+# Hackathon-only: allow any local demo page or partner service to query state.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.post("/session/start")
+async def start_session() -> dict[str, str]:
+    return {"session_id": manager.create_session()}
+
+
+@app.websocket("/audio/{session_id}")
+async def audio_socket(websocket: WebSocket, session_id: str) -> None:
+    state = manager.get(session_id)
+    if state is None:
+        await websocket.close(code=1008, reason="unknown session")
+        return
+    await websocket.accept()
+    logger.info("event=websocket_connected session_id=%s", session_id)
+    try:
+        await _receive_audio_loop(websocket, session_id)
+    except WebSocketDisconnect:
+        logger.info("event=websocket_disconnected session_id=%s", session_id)
+
+
+@app.get("/state/{session_id}")
+async def get_state(session_id: str) -> dict[str, Any]:
+    state = manager.get(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return state.to_response()
+
+
+@app.post("/session/{session_id}/end")
+async def end_session(session_id: str) -> dict[str, bool]:
+    manager.end(session_id)
+    return {"ok": True}
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    return {"status": "ok", "model_loaded": hasattr(app.state, "perception")}
+
+
+async def _receive_audio_loop(websocket: WebSocket, session_id: str) -> None:
+    while True:
+        message = await websocket.receive()
+        if message.get("type") == "websocket.disconnect":
+            raise WebSocketDisconnect()
+        raw_bytes = message.get("bytes")
+        if raw_bytes is None:
+            continue
+        await _process_audio_bytes(websocket, session_id, raw_bytes)
+
+
+async def _process_audio_bytes(websocket: WebSocket, session_id: str, raw_bytes: bytes) -> None:
+    started = time.perf_counter()
+    state = manager.get(session_id)
+    if state is None:
+        await websocket.close(code=1008, reason="session ended")
+        return
+    pcm = state.decoder.decode(raw_bytes)
+    if pcm.size < config.MIN_INFERENCE_SAMPLES:
+        await _send_ack(websocket, started, buffered=True)
+        return
+    result = await asyncio.to_thread(app.state.perception.analyze, pcm)
+    manager.update(session_id, result)
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "event=chunk_processed session_id=%s bytes=%d samples=%d container=%s "
+        "latency_ms=%d inference_ms=%d emotion=%s hesitation=%.3f",
+        session_id,
+        len(raw_bytes),
+        pcm.size,
+        state.decoder.last_format,
+        latency_ms,
+        result.get("inference_ms", 0),
+        result.get("emotion", "NEUTRAL"),
+        state.hesitation_score,
+    )
+    await websocket.send_json({"chunk_processed": True, "latency_ms": latency_ms})
+
+
+async def _send_ack(websocket: WebSocket, started: float, buffered: bool) -> None:
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    await websocket.send_json(
+        {"chunk_processed": True, "latency_ms": latency_ms, "buffered": buffered}
+    )
+
+
+async def _cancel_task(task: asyncio.Task[Any]) -> None:
+    try:
+        await task
+    except asyncio.CancelledError:
+        return
+
+
+_static_dir = Path(__file__).resolve().parents[2] / "static"
+app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="static")

@@ -139,15 +139,24 @@ noisy chunk doesn't spike the score.
 Keep the weights in config.py so they can be tuned during the demo.
 
 ## Known unknowns to verify at build time
-1. `funasr_onnx.SenseVoiceSmall` may accept numpy arrays directly, or may
-   require a file path. Check the exact API when wrapping. If file path only,
-   write chunks to a NamedTemporaryFile per inference call.
-2. The model download (~250MB) happens on first `SenseVoiceSmall(...)` call
-   and may take 1–3 minutes over slow wifi. Log clearly on startup.
-3. Emotion labels arrive as string tokens like `<|FEARFUL|>` inside the
-   transcript. Parse them out with a regex; the funasr postprocess utility
-   may or may not strip them cleanly.
-4. Browser MediaRecorder produces `audio/webm;codecs=opus` on Chrome/Firefox
+1. Verified against `funasr-onnx==0.4.1`: `SenseVoiceSmall.__call__` accepts
+   numpy arrays and file paths. The wrapper in `src/voice_perception/perception.py`
+   tries numpy first, then falls back to a NamedTemporaryFile WAV if needed.
+2. Remote model download uses ModelScope. Use `iic/SenseVoiceSmall-onnx` for
+   the quantized ONNX runtime model; `iic/SenseVoiceSmall` is a PyTorch repo and
+   triggers an ONNX export path that requires `funasr`. If `modelscope` is
+   unavailable, install it or set `SENSEVOICE_MODEL_DIR` to a local model
+   directory containing `model_quant.onnx`, `config.yaml`, `am.mvn`, and the
+   SentencePiece model. The ONNX repo currently ships `tokens.json` but not the
+   `.bpe.model` file, so the wrapper fetches that one tokenizer file from the
+   PyTorch repo before constructing `SenseVoiceSmall`.
+3. Verified output shape for `SenseVoiceSmall.__call__` is `list[str]` with
+   inline tokens such as `<|FEARFUL|>`, `<|Breath|>`, language, and textnorm
+   markers. Parse them with regex and strip them from the transcript.
+4. `funasr-onnx==0.4.1` imports `jieba` and `torch` at runtime without
+   declaring them, so keep those pins in `requirements.txt` unless the wrapper
+   or upstream package changes.
+5. Browser MediaRecorder produces `audio/webm;codecs=opus` on Chrome/Firefox
    but `audio/mp4` on Safari. PyAV handles both, but log the incoming
    container format for debugging.
 
