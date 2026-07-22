@@ -15,6 +15,7 @@ from voice_perception import config
 from voice_perception.audio import load_wav_16khz_mono
 from voice_perception.fusion import HesitationScorer
 from voice_perception.perception import VoicePerception
+from voice_perception.session import RollingAudioBuffer
 
 
 def iter_chunks(pcm, chunk_samples: int = config.SAMPLE_RATE) -> Iterable[tuple[int, object]]:
@@ -25,12 +26,17 @@ def iter_chunks(pcm, chunk_samples: int = config.SAMPLE_RATE) -> Iterable[tuple[
 def analyze_file(path: Path, perception: VoicePerception) -> float:
     pcm = load_wav_16khz_mono(path)
     scorer = HesitationScorer()
+    buffer = RollingAudioBuffer()
     final_score = 0.0
     print(f"file: {path}")
-    print("chunk emotion    events                 silence infer_ms score")
-    print("----- ---------- ---------------------- ------- -------- -----")
+    print("chunk emotion    voice_state  events                 silence infer_ms score")
+    print("----- ---------- ------------ ---------------------- ------- -------- -----")
     for chunk_index, chunk in iter_chunks(pcm):
-        result = perception.analyze(chunk)
+        window = buffer.append(chunk)
+        if window is None:
+            print_buffered_row(chunk_index, buffer.samples)
+            continue
+        result = perception.analyze(window)
         final_score = scorer.update(result)
         print_row(chunk_index, result, final_score)
     print()
@@ -39,11 +45,18 @@ def analyze_file(path: Path, perception: VoicePerception) -> float:
 
 def print_row(chunk_index: int, result: dict[str, object], score: float) -> None:
     events = ",".join(result.get("events", [])) or "-"  # type: ignore[arg-type]
+    voice_state = result.get("voice_state", {})
+    label = voice_state.get("label", "unknown") if isinstance(voice_state, dict) else "unknown"
     print(
         f"{chunk_index:>5} {result.get('emotion', 'NEUTRAL'):<10} "
-        f"{events:<22.22} {result.get('silence_ratio', 0.0):>7.2f} "
+        f"{label:<12.12} {events:<22.22} {result.get('silence_ratio', 0.0):>7.2f} "
         f"{result.get('inference_ms', 0):>8} {score:>5.2f}"
     )
+
+
+def print_buffered_row(chunk_index: int, buffered_samples: int) -> None:
+    buffered_seconds = buffered_samples / config.SAMPLE_RATE
+    print(f"{chunk_index:>5} {'BUFFERING':<10} {'-':<12} {'-':<22} {buffered_seconds:>7.2f} {'-':>8} {'-':>5}")
 
 
 def main() -> None:

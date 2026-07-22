@@ -199,6 +199,38 @@
       color: #ddd6fe;
       line-height: 1.5;
     }
+    .banner {
+      margin-bottom: 22px;
+      border: 1px solid rgba(247, 201, 72, 0.30);
+      background: rgba(247, 201, 72, 0.12);
+      color: #fff2b8;
+    }
+    .signal-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .signal-item {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .signal-label { color: var(--muted); font-size: 0.78rem; font-weight: 800; text-transform: uppercase; }
+    .signal-value { margin-top: 6px; font-size: 1rem; font-weight: 900; }
+    .mini-meter-wrap {
+      height: 12px;
+      margin-top: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #26304d;
+    }
+    .mini-meter { height: 100%; width: 0%; border-radius: inherit; background: var(--blue); }
+    .experimental {
+      border-color: rgba(147,160,184,0.22);
+      background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025));
+    }
     .test-list {
       margin: 16px 0 0;
       padding-left: 20px;
@@ -222,7 +254,7 @@
     .result-value { margin-top: 6px; font-size: 1.1rem; font-weight: 900; }
     @media (max-width: 820px) {
       header { align-items: flex-start; flex-direction: column; }
-      .grid, .result-grid { grid-template-columns: 1fr; }
+      .grid, .result-grid, .signal-grid { grid-template-columns: 1fr; }
       .section-heading { align-items: flex-start; flex-direction: column; }
       button { width: 100%; }
     }
@@ -232,40 +264,71 @@
   <main>
     <header>
       <div>
-        <h1>Voice Perception</h1>
-        <p>Use live streaming for continuous state, or record then submit for a one-shot classification test.</p>
+        <h1>Voice Perception Test Lab</h1>
+        <p>Real-time speech state, transcript, audio events, and cautious stress or hesitation signals.</p>
       </div>
       <button id="toggleButton" type="button">Start</button>
     </header>
 
+    <p class="note banner">
+      Exact emotion labels are experimental model outputs, not facts. The demo foregrounds speech activity,
+      acoustic voice state, stress, hesitation, and score drivers. Emotion2Vec+ is the primary exact-emotion
+      model when enabled; SenseVoice emotion tokens are shown only as secondary debug hints.
+    </p>
+
     <div class="section-heading">
       <div>
         <h2>Live streaming mode</h2>
-        <p>Continuous WebSocket microphone ingestion for real-time state updates.</p>
+        <p>Continuous WebSocket microphone ingestion. Acoustic signals update quickly; transcript and model labels wait for rolling context.</p>
       </div>
       <div class="status" id="status"><span class="dot"></span><span id="statusText">Idle</span></div>
     </div>
 
     <section class="grid" aria-live="polite">
+      <article class="card">
+        <h2>Voice state</h2>
+        <div class="emotion-row">
+          <div class="pill" id="voiceStatePill">NO SPEECH</div>
+          <div class="confidence" id="voiceStateConfidence">signal reliability 1.00</div>
+        </div>
+        <p class="muted" style="margin-top: 16px;">Based on speech activity, energy, pauses, pitch movement, and breath-like noise.</p>
+        <div class="signal-grid">
+          <div class="signal-item"><div class="signal-label">Speech activity</div><div class="signal-value" id="speechActivityText">0.00</div></div>
+          <div class="signal-item"><div class="signal-label">SNR</div><div class="signal-value" id="snrText">0 dB</div></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>Stress or hesitation signal</h2>
+        <div class="meter-wrap"><div class="meter" id="meter"></div></div>
+        <div class="score-line"><span>low</span><span id="scoreText">0.00</span><span>high</span></div>
+        <div class="signal-grid">
+          <div class="signal-item"><div class="signal-label">Stress</div><div class="signal-value" id="stressText">0.00</div><div class="mini-meter-wrap"><div class="mini-meter" id="stressMeter"></div></div></div>
+          <div class="signal-item"><div class="signal-label">Arousal</div><div class="signal-value" id="arousalText">0.00</div><div class="mini-meter-wrap"><div class="mini-meter" id="arousalMeter"></div></div></div>
+          <div class="signal-item"><div class="signal-label">Speaking confidence</div><div class="signal-value" id="speakingConfidenceText">0.00</div><div class="mini-meter-wrap"><div class="mini-meter" id="speakingConfidenceMeter"></div></div></div>
+          <div class="signal-item"><div class="signal-label">Driver</div><div class="signal-value" id="driverText">pause/silence 0.00</div></div>
+        </div>
+      </article>
+
       <article class="card full">
         <h2>Live transcript</h2>
         <div class="transcript" id="transcript"><span class="muted">Waiting for speech...</span></div>
       </article>
 
       <article class="card">
-        <h2>Emotion</h2>
-        <div class="emotion-row">
-          <div class="pill" id="emotionPill">NEUTRAL</div>
-          <div class="confidence" id="confidence">confidence 0.00</div>
-        </div>
-        <h2 style="margin-top: 28px;">Audio events</h2>
+        <h2>Audio events</h2>
         <div class="tags" id="events"><span class="muted">None yet</span></div>
+        <h2 style="margin-top: 28px;">Fast signal events</h2>
+        <div class="tags" id="signalEvents"><span class="muted">None yet</span></div>
       </article>
 
-      <article class="card">
-        <h2>Hesitation score</h2>
-        <div class="meter-wrap"><div class="meter" id="meter"></div></div>
-        <div class="score-line"><span>calm</span><span id="scoreText">0.00</span><span>high</span></div>
+      <article class="card experimental">
+        <h2>Experimental exact emotion</h2>
+        <div class="emotion-row">
+          <div class="pill" id="emotionPill">NEUTRAL</div>
+          <div class="confidence" id="confidence">Emotion2Vec+ waiting for speech</div>
+        </div>
+        <p class="muted" id="emotionNote" style="margin-top: 16px;">Suppressed during no-speech. SenseVoice emotion tokens are debug-only.</p>
       </article>
 
       <article class="card full">
@@ -290,8 +353,8 @@
 
       <h2 style="margin-top: 28px;">Practical speaking tests</h2>
       <p>
-        The current model responds to paralinguistic audio cues and SenseVoice emotion tokens,
-        not guaranteed sentiment of the words alone. Try the same neutral sentence with different delivery.
+        Use the same neutral sentence with different delivery. Pass or fail the run on repeated speech activity,
+        pauses, acoustic stress or hesitation, transcript sanity, and latency. Exact emotion remains experimental.
       </p>
       <ul class="test-list">
         <li><strong>Calm:</strong> steady volume and pace, relaxed tone.</li>
@@ -301,18 +364,21 @@
         <li><strong>Angry or agitated:</strong> sharper attack, louder voice, faster clipped phrasing.</li>
       </ul>
       <p class="note" style="margin-top: 16px;">
-        SenseVoice-Small emotion tokens can be limited or unstable on short microphone demos.
-        If this machine mostly emits NEUTRAL or unknown emotion tokens, treat no-speech filtering,
-        transcript, audio events, and hesitation from breath, cough, cry, or silence as the reliable signals.
+        Emotion2Vec+ is the primary exact-emotion model when enabled, but it is still a demo model until license
+        review and product validation finish. Silence must return no speech, no transcript, no events, and low stress.
       </p>
 
       <h2 style="margin-top: 28px;">One-shot result</h2>
       <div class="result-grid">
         <div class="result-item"><div class="result-label">Transcript</div><div class="result-value" id="oneShotTranscript">-</div></div>
-        <div class="result-item"><div class="result-label">Emotion</div><div class="result-value" id="oneShotEmotion">-</div></div>
-        <div class="result-item"><div class="result-label">Confidence</div><div class="result-value" id="oneShotConfidence">-</div></div>
-        <div class="result-item"><div class="result-label">Events</div><div class="result-value" id="oneShotEvents">-</div></div>
+        <div class="result-item"><div class="result-label">Voice state</div><div class="result-value" id="oneShotVoiceState">-</div></div>
+        <div class="result-item"><div class="result-label">Speech activity</div><div class="result-value" id="oneShotSpeechActivity">-</div></div>
+        <div class="result-item"><div class="result-label">Stress</div><div class="result-value" id="oneShotStress">-</div></div>
         <div class="result-item"><div class="result-label">Hesitation</div><div class="result-value" id="oneShotHesitation">-</div></div>
+        <div class="result-item"><div class="result-label">Exact emotion</div><div class="result-value" id="oneShotEmotion">-</div></div>
+        <div class="result-item"><div class="result-label">Emotion note</div><div class="result-value" id="oneShotConfidence">-</div></div>
+        <div class="result-item"><div class="result-label">Latency</div><div class="result-value" id="oneShotLatency">-</div></div>
+        <div class="result-item"><div class="result-label">Events</div><div class="result-value" id="oneShotEvents">-</div></div>
       </div>
       <h2>One-shot raw JSON</h2>
       <pre id="oneShotRawJson">{}</pre>
@@ -324,8 +390,21 @@
     const statusEl = document.getElementById('status');
     const statusText = document.getElementById('statusText');
     const transcriptEl = document.getElementById('transcript');
+    const voiceStatePill = document.getElementById('voiceStatePill');
+    const voiceStateConfidence = document.getElementById('voiceStateConfidence');
+    const speechActivityText = document.getElementById('speechActivityText');
+    const snrText = document.getElementById('snrText');
+    const stressText = document.getElementById('stressText');
+    const stressMeter = document.getElementById('stressMeter');
+    const arousalText = document.getElementById('arousalText');
+    const arousalMeter = document.getElementById('arousalMeter');
+    const speakingConfidenceText = document.getElementById('speakingConfidenceText');
+    const speakingConfidenceMeter = document.getElementById('speakingConfidenceMeter');
+    const driverText = document.getElementById('driverText');
+    const signalEventsEl = document.getElementById('signalEvents');
     const emotionPill = document.getElementById('emotionPill');
     const confidenceEl = document.getElementById('confidence');
+    const emotionNote = document.getElementById('emotionNote');
     const eventsEl = document.getElementById('events');
     const meterEl = document.getElementById('meter');
     const scoreText = document.getElementById('scoreText');
@@ -337,10 +416,14 @@
     const oneShotStatusText = document.getElementById('oneShotStatusText');
     const oneShotAudio = document.getElementById('oneShotAudio');
     const oneShotTranscript = document.getElementById('oneShotTranscript');
+    const oneShotVoiceState = document.getElementById('oneShotVoiceState');
+    const oneShotSpeechActivity = document.getElementById('oneShotSpeechActivity');
+    const oneShotStress = document.getElementById('oneShotStress');
     const oneShotEmotion = document.getElementById('oneShotEmotion');
     const oneShotConfidence = document.getElementById('oneShotConfidence');
     const oneShotEvents = document.getElementById('oneShotEvents');
     const oneShotHesitation = document.getElementById('oneShotHesitation');
+    const oneShotLatency = document.getElementById('oneShotLatency');
     const oneShotRawJson = document.getElementById('oneShotRawJson');
 
     let sessionId = null;
@@ -383,7 +466,7 @@
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         recorder = createRecorder(mediaStream);
         recorder.ondataavailable = sendChunk;
-        recorder.start(1000);
+        recorder.start(200);
         pollTimer = window.setInterval(pollState, 300);
         running = true;
         toggleButton.textContent = 'Stop';
@@ -440,7 +523,14 @@
     function openSocket(id) {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(`${protocol}//${window.location.host}/audio/${id}`);
-      ws.onmessage = event => console.debug('ack', event.data);
+      ws.onmessage = event => {
+        console.debug('ack', event.data);
+        try {
+          updateSignalUi(JSON.parse(event.data));
+        } catch (_error) {
+          return;
+        }
+      };
       ws.onerror = () => setStatus('WebSocket error', 'error');
       return new Promise((resolve, reject) => {
         ws.onopen = () => resolve(ws);
@@ -462,29 +552,67 @@
 
     function updateUi(state) {
       rawJson.textContent = JSON.stringify(state, null, 2);
-      transcriptEl.textContent = state.no_speech ? 'No speech detected' : (state.transcript_partial || 'Listening...');
+      updateSignalUi(state);
+      const signals = state.signals || {};
+      const noSpeech = Boolean(state.no_speech || signals.no_speech);
+      transcriptEl.textContent = noSpeech ? 'No speech detected' : (state.transcript_partial || 'Listening...');
+      renderTags(eventsEl, state.events || []);
+      renderTags(signalEventsEl, (state.signal_events || []).map(event => `${event.type} ${Number(event.confidence || 0).toFixed(2)}`));
+      updateEmotionUi(state);
+    }
+
+    function updateSignalUi(state) {
+      const voiceState = state.voice_state || {};
+      const signals = state.signals || {};
+      const label = voiceState.label || (signals.no_speech ? 'no_speech' : 'uncertain');
+      voiceStatePill.textContent = formatLabel(label);
+      voiceStatePill.style.background = labelColor(label);
+      voiceStateConfidence.textContent = `signal reliability ${Number(signals.signal_reliability ?? voiceState.confidence ?? 0).toFixed(2)}`;
+      speechActivityText.textContent = Number(signals.speech_activity || 0).toFixed(2);
+      snrText.textContent = `${Number(signals.snr_db || 0).toFixed(1)} dB`;
+      const hesitation = clamp(Number(signals.hesitation ?? state.hesitation_score ?? 0), 0, 1);
+      setMeter(meterEl, hesitation);
+      scoreText.textContent = `${hesitation.toFixed(2)} acoustic / ${Number(state.hesitation_score || 0).toFixed(2)} API`;
+      stressText.textContent = Number(signals.stress || 0).toFixed(2);
+      arousalText.textContent = Number(signals.arousal || 0).toFixed(2);
+      speakingConfidenceText.textContent = Number(signals.speaking_confidence || 0).toFixed(2);
+      setMeter(stressMeter, Number(signals.stress || 0));
+      setMeter(arousalMeter, Number(signals.arousal || 0));
+      setMeter(speakingConfidenceMeter, Number(signals.speaking_confidence || 0), true);
+      const drivers = state.score_drivers || {};
+      driverText.textContent = `pause/silence ${Number(drivers.pause_silence || 0).toFixed(2)}`;
+    }
+
+    function updateEmotionUi(state) {
       const emotion = state.emotion || 'NEUTRAL';
       emotionPill.textContent = emotion;
       emotionPill.style.background = emotionColor(emotion);
       emotionPill.classList.add('pop');
       window.setTimeout(() => emotionPill.classList.remove('pop'), 180);
-      confidenceEl.textContent = `confidence ${Number(state.emotion_confidence || 0).toFixed(2)}`;
-      eventsEl.innerHTML = '';
-      const events = state.events || [];
-      if (events.length === 0) {
-        eventsEl.innerHTML = '<span class="muted">None</span>';
+      const source = state.emotion_source || 'waiting';
+      confidenceEl.textContent = `${source} confidence ${Number(state.emotion_confidence || 0).toFixed(2)}`;
+      const ser = state.ser || {};
+      if (state.no_speech || (state.signals || {}).no_speech) {
+        emotionNote.textContent = 'Suppressed by the no-speech guard.';
+      } else if (source === 'emotion2vec') {
+        emotionNote.textContent = `Emotion2Vec+ experimental label, raw ${ser.raw_label || 'unknown'}. License caveat: ${ser.license_caveat || 'pending'}.`;
       } else {
-        for (const eventName of events) {
-          const tag = document.createElement('span');
-          tag.className = 'tag';
-          tag.textContent = eventName;
-          eventsEl.appendChild(tag);
-        }
+        emotionNote.textContent = `SenseVoice secondary token: ${state.sensevoice_raw_emotion || state.sensevoice_emotion || 'none'}.`;
       }
-      const score = clamp(Number(state.hesitation_score || 0), 0, 1);
-      meterEl.style.width = `${score * 100}%`;
-      meterEl.style.background = `hsl(${120 - score * 120}, 82%, 48%)`;
-      scoreText.textContent = score.toFixed(2);
+    }
+
+    function renderTags(container, values) {
+      container.innerHTML = '';
+      if (!values.length) {
+        container.innerHTML = '<span class="muted">None</span>';
+        return;
+      }
+      for (const value of values) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = value;
+        container.appendChild(tag);
+      }
     }
 
     async function startOneShotRecording() {
@@ -561,20 +689,31 @@
 
     function renderOneShotResult(payload) {
       oneShotRawJson.textContent = JSON.stringify(payload, null, 2);
-      oneShotTranscript.textContent = payload.no_speech ? 'No speech detected' : (payload.transcript || payload.transcript_partial || '(empty)');
-      oneShotEmotion.textContent = payload.no_speech ? 'NO SPEECH' : (payload.emotion || 'NEUTRAL');
-      oneShotConfidence.textContent = Number(payload.emotion_confidence || 0).toFixed(2);
+      const signals = payload.signals || {};
+      const voiceState = payload.voice_state || {};
+      const noSpeech = Boolean(payload.no_speech || signals.no_speech);
+      oneShotTranscript.textContent = noSpeech ? 'No speech detected' : (payload.transcript || payload.transcript_partial || '(empty)');
+      oneShotVoiceState.textContent = formatLabel(voiceState.label || (noSpeech ? 'no_speech' : 'uncertain'));
+      oneShotSpeechActivity.textContent = Number(signals.speech_activity || 0).toFixed(2);
+      oneShotStress.textContent = Number(signals.stress || 0).toFixed(2);
+      oneShotHesitation.textContent = `${Number(signals.hesitation || 0).toFixed(2)} acoustic / ${Number(payload.hesitation_score || 0).toFixed(2)} API`;
+      oneShotEmotion.textContent = noSpeech ? 'suppressed' : (payload.emotion || 'NEUTRAL');
+      oneShotConfidence.textContent = `${payload.emotion_source || 'none'} ${Number(payload.emotion_confidence || 0).toFixed(2)}`;
+      oneShotLatency.textContent = `${Number(payload.latency_ms || 0)} ms`;
       const events = payload.events || [];
       oneShotEvents.textContent = events.length ? events.join(', ') : 'None';
-      oneShotHesitation.textContent = Number(payload.hesitation_score || 0).toFixed(2);
     }
 
     function resetOneShotResult() {
       oneShotTranscript.textContent = '-';
+      oneShotVoiceState.textContent = '-';
+      oneShotSpeechActivity.textContent = '-';
+      oneShotStress.textContent = '-';
       oneShotEmotion.textContent = '-';
       oneShotConfidence.textContent = '-';
       oneShotEvents.textContent = '-';
       oneShotHesitation.textContent = '-';
+      oneShotLatency.textContent = '-';
       oneShotRawJson.textContent = '{}';
     }
 
@@ -606,6 +745,30 @@
       if (mimeType.includes('mp4')) return 'one-shot-recording.mp4';
       if (mimeType.includes('ogg')) return 'one-shot-recording.ogg';
       return 'one-shot-recording.webm';
+    }
+
+    function setMeter(element, value, positive = false) {
+      const score = clamp(Number(value || 0), 0, 1);
+      element.style.width = `${score * 100}%`;
+      element.style.background = positive ? `hsl(${score * 120}, 82%, 48%)` : `hsl(${120 - score * 120}, 82%, 48%)`;
+    }
+
+    function labelColor(label) {
+      const colors = {
+        no_speech: '#60718f',
+        calm: '#19c37d',
+        confident: '#1fd17f',
+        hesitant: '#f7c948',
+        stressed: '#ff9f1c',
+        agitated: '#ff5c7a',
+        subdued: '#5e8cff',
+        uncertain: '#a78bfa'
+      };
+      return colors[label] || '#60718f';
+    }
+
+    function formatLabel(label) {
+      return String(label || 'uncertain').replace(/_/g, ' ').toUpperCase();
     }
 
     function emotionColor(emotion) {

@@ -21,12 +21,12 @@ def compute_hesitation_score(perception_result: dict[str, Any]) -> float:
     emotion_stress *= confidence
     event_stress = _event_stress(events if isinstance(events, list) else [])
     silence_stress = silence_ratio * config.SILENCE_STRESS_MULTIPLIER
-
-    return clip(
+    legacy_score = clip(
         config.HESITATION_EMOTION_WEIGHT * emotion_stress
         + config.HESITATION_EVENT_WEIGHT * event_stress
         + config.HESITATION_SILENCE_WEIGHT * silence_stress
     )
+    return max(legacy_score, _acoustic_score(perception_result))
 
 
 class HesitationScorer:
@@ -57,3 +57,15 @@ def _event_stress(events: Iterable[Any]) -> float:
         if event.lower() in normalized:
             total += weight
     return clip(total, 0.0, config.EVENT_STRESS_MAX)
+
+
+def _acoustic_score(perception_result: dict[str, Any]) -> float:
+    signals = perception_result.get("signals")
+    if not isinstance(signals, dict) or signals.get("no_speech"):
+        return 0.0
+    hesitation = clip(float(signals.get("hesitation", 0.0)))
+    stress = clip(float(signals.get("stress", 0.0)))
+    return clip(
+        config.ACOUSTIC_HESITATION_FUSION_WEIGHT * hesitation
+        + config.ACOUSTIC_STRESS_FUSION_WEIGHT * stress
+    )
